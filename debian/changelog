@@ -1,3 +1,10 @@
+gawk (1:5.1.0-1deepin1) unstable; urgency=medium
+
+  * SECURITY UPDATE: integer overflow
+    - debian/patches/CVE-2023-4156.patch
+
+ -- lichenggang <lichenggang@deepin.org>  Tue, 27 Jan 2026 16:59:05 +0800
+
 gawk (1:5.1.0-1) unstable; urgency=high
 
   * New upstream release. (Closes: #963780)
