@@ -1,6 +1,6 @@
 /* gawkmisc.c --- miscellaneous gawk routines that are OS specific.
 
-   Copyright (C) 1986, 1988, 1989, 1991 - 1998, 2001 - 2004, 2011
+   Copyright (C) 1986, 1988, 1989, 1991 - 1998, 2001 - 2004, 2011, 2021, 2022,
    the Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
@@ -18,16 +18,18 @@
    Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  */
 
 #ifdef __CYGWIN__
-#include <stdio.h>
+#ifdef __MSYS__
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <sys/cygwin.h>
-#include <io.h>
+#endif
+#include <io.h>		/* for declaration of setmode(). */
 #endif
 
-char quote = '\'';
-char *defpath = DEFPATH;
-char *deflibpath = DEFLIBPATH;
-char envsep = ':';
+const char quote = '\'';
+const char *defpath = DEFPATH;
+const char *deflibpath = DEFLIBPATH;
+const char envsep = ':';
 
 #ifndef INVALID_HANDLE
 /* FIXME: is this value for INVALID_HANDLE correct? */
@@ -36,10 +38,10 @@ char envsep = ':';
 
 /* gawk_name --- pull out the "gawk" part from how the OS called us */
 
-char *
+const char *
 gawk_name(const char *filespec)
 {
-	char *p;
+	const char *p;
 
 	/* "path/name" -> "name" */
 	p = strrchr(filespec, '/');
@@ -287,6 +289,11 @@ files_are_same(char *path, SRCFILE *src)
 
 void
 init_sockets(void)
+{
+}
+
+void
+os_maybe_set_errno(void)
 {
 }
 

@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2020,
+ * Copyright (C) 1986, 1988, 1989, 1991-2022,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -113,24 +113,8 @@
 #include "popen.h"
 #endif
 
-#ifdef __EMX__
-#include <process.h>
-
-#if !defined(_S_IFDIR) && defined(S_IFDIR)
-#define _S_IFDIR	S_IFDIR
-#endif
-
-#if !defined(_S_IRWXU) && defined(S_IRWXU)
-#define _S_IRWXU	S_IRWXU
-#endif
-#endif
-
 #ifndef ENFILE
 #define ENFILE EMFILE
-#endif
-
-#if defined(__DJGPP__)
-#define closemaybesocket(fd)	close(fd)
 #endif
 
 #if defined(VMS)
@@ -193,10 +177,6 @@
 
 #if defined(_AIX)
 #undef TANDEM	/* AIX defines this in one of its header files */
-#endif
-
-#ifdef __DJGPP__
-#define PIPES_SIMULATED
 #endif
 
 #ifdef __MINGW32__
@@ -310,7 +290,7 @@ static bool inetfile(const char *str, size_t len, struct inet_socket_info *isn);
 
 static NODE *in_PROCINFO(const char *pidx1, const char *pidx2, NODE **full_idx);
 static long get_read_timeout(IOBUF *iop);
-static ssize_t read_with_timeout(int fd, char *buf, size_t size);
+static ssize_t read_with_timeout(int fd, void *buf, size_t size);
 
 static bool read_can_timeout = false;
 static long read_timeout;
@@ -361,7 +341,7 @@ init_io()
 }
 
 
-#if defined(__DJGPP__) || defined(__MINGW32__) || defined(__EMX__) || defined(__CYGWIN__)
+#if defined(__MINGW32__) || defined(__CYGWIN__)
 /* binmode --- convert BINMODE to string for fopen */
 
 static const char *
@@ -447,7 +427,6 @@ nextfile(IOBUF **curfile, bool skipping)
 	int fd = INVALID_HANDLE;
 	int errcode = 0;
 	IOBUF *iop = *curfile;
-	long argc;
 
 	if (skipping) {			/* for 'nextfile' call */
 		errcode = 0;
@@ -469,9 +448,7 @@ nextfile(IOBUF **curfile, bool skipping)
 			return 0;
 	}
 
-	argc = get_number_si(ARGC_node->var_value);
-
-	for (; i < argc; i++) {
+	for (; i < get_number_si(ARGC_node->var_value);  i++) {
 		tmp = make_number((AWKNUM) i);
 		(void) force_string(tmp);
 		arg = in_array(ARGV_node, tmp);
@@ -631,8 +608,8 @@ remap_std_file(int oldfd)
 	if (newfd >= 0) {
 		/* if oldfd is open, dup2() will close oldfd for us first. */
 		ret = dup2(newfd, oldfd);
-		if (ret == 0)
-			close(newfd);
+		// close unconditionally, calling code assumes it
+		close(newfd);
 	} else
 		ret = 0;
 
@@ -725,7 +702,70 @@ redflags2str(int flags)
 		{ 0, NULL }
 	};
 
+	if (flags == RED_NONE)
+		return "RED_NONE";
+
 	return genflags2str(flags, redtab);
+}
+
+/* check_duplicated_redirections --- see if the same name used differently */
+
+static void
+check_duplicated_redirections(const char *name, size_t len,
+		redirect_flags_t oldflags, redirect_flags_t newflags)
+{
+	static struct mixture {
+		redirect_flags_t common;
+		redirect_flags_t mode;
+		redirect_flags_t other_mode;
+		const char *message;
+	} mixtures[] = {
+		{ RED_FILE, RED_READ, RED_WRITE,
+			gettext_noop("`%.*s' used for input file and for output file") },
+		{ RED_READ, RED_FILE, RED_PIPE,
+			gettext_noop("`%.*s' used for input file and input pipe") },
+		{ RED_READ, RED_FILE, RED_TWOWAY,
+			gettext_noop("`%.*s' used for input file and two-way pipe") },
+		{ RED_NONE, (RED_FILE|RED_READ), (RED_PIPE|RED_WRITE),
+			gettext_noop("`%.*s' used for input file and output pipe") },
+		{ (RED_FILE|RED_WRITE), (RED_FILE|RED_WRITE), RED_APPEND,
+			gettext_noop("unnecessary mixing of `>' and `>>' for file `%.*s'") },
+		{ RED_NONE, (RED_FILE|RED_WRITE), (RED_PIPE|RED_READ),
+			gettext_noop("`%.*s' used for input pipe and output file") },
+		{ RED_WRITE, RED_FILE, RED_PIPE,
+			gettext_noop("`%.*s' used for output file and output pipe") },
+		{ RED_WRITE, RED_FILE, RED_TWOWAY,
+			gettext_noop("`%.*s' used for output file and two-way pipe") },
+		{ RED_PIPE, RED_READ, RED_WRITE,
+			gettext_noop("`%.*s' used for input pipe and output pipe") },
+		{ RED_READ, RED_PIPE, RED_TWOWAY,
+			gettext_noop("`%.*s' used for input pipe and two-way pipe") },
+		{ RED_WRITE, RED_PIPE, RED_TWOWAY,
+			gettext_noop("`%.*s' used for output pipe and two-way pipe") },
+	};
+	int i = 0, j = sizeof(mixtures) / sizeof(mixtures[0]);
+
+	oldflags &= ~(RED_NOBUF|RED_EOF|RED_PTY);
+	newflags &= ~(RED_NOBUF|RED_EOF|RED_PTY);
+
+	for (i = 0; i < j; i++) {
+		bool both_have_common = \
+			(   (oldflags & mixtures[i].common) == mixtures[i].common
+			 && (newflags & mixtures[i].common) == mixtures[i].common);
+		bool old_has_mode = (oldflags & mixtures[i].mode) == mixtures[i].mode;
+		bool new_has_mode = (newflags & mixtures[i].mode) == mixtures[i].mode;
+		bool old_has_other_mode = (oldflags & mixtures[i].other_mode) == mixtures[i].other_mode;
+		bool new_has_other_mode = (newflags & mixtures[i].other_mode) == mixtures[i].other_mode;
+
+		if (   both_have_common
+		    && oldflags != newflags
+		    && (   (old_has_mode || new_has_mode)
+			&& (old_has_other_mode || new_has_other_mode)))
+		{
+			lintwarn(_(mixtures[i].message), len, name);
+			return;
+		}
+	}
 }
 
 /* redirect_string --- Redirection for printf and print commands, use string info */
@@ -735,8 +775,8 @@ redirect_string(const char *str, size_t explen, bool not_string,
 		int redirtype, int *errflg, int extfd, bool failure_fatal)
 {
 	struct redirect *rp;
-	int tflag = 0;
-	int outflag = 0;
+	redirect_flags_t tflag = RED_NONE;
+	redirect_flags_t outflag = RED_NONE;
 	const char *direction = "to";
 	const char *mode;
 	int fd;
@@ -781,7 +821,7 @@ redirect_string(const char *str, size_t explen, bool not_string,
 		what = "|&";
 		break;
 	default:
-		cant_happen();
+		cant_happen("invalid redirection type %d", (int) redirtype);
 	}
 	if (do_lint && not_string)
 		lintwarn(_("expression in `%s' redirection is a number"),
@@ -831,20 +871,17 @@ redirect_string(const char *str, size_t explen, bool not_string,
 
 		/* now check for a match */
 		if (strlen(rp->value) == explen
-		    && memcmp(rp->value, str, explen) == 0
-		    && ((rp->flag & ~(RED_NOBUF|RED_EOF|RED_PTY)) == tflag
-			|| (outflag != 0
-			    && (rp->flag & (RED_FILE|RED_WRITE)) == outflag))) {
+		    && memcmp(rp->value, str, explen) == 0) {
+			if (do_lint) {
+				check_duplicated_redirections(rp->value, explen,
+						(redirect_flags_t) rp->flag, (redirect_flags_t) tflag);
+			}
 
-			int rpflag = (rp->flag & ~(RED_NOBUF|RED_EOF|RED_PTY));
-			int newflag = (tflag & ~(RED_NOBUF|RED_EOF|RED_PTY));
-
-			if (do_lint && rpflag != newflag)
-				lintwarn(
-		_("unnecessary mixing of `>' and `>>' for file `%.*s'"),
-					(int) explen, rp->value);
-
-			break;
+			if (((rp->flag & ~(RED_NOBUF|RED_EOF|RED_PTY)) == tflag
+			    || (outflag != 0
+				&& (rp->flag & (RED_FILE|RED_WRITE)) == outflag))) {
+				break;
+			}
 		}
 	}
 
@@ -861,7 +898,7 @@ redirect_string(const char *str, size_t explen, bool not_string,
 		newstr[explen] = '\0';
 		str = newstr;
 		rp->value = newstr;
-		rp->flag = tflag;
+		rp->flag =  (redirect_flags_t) tflag;
 		init_output_wrapper(& rp->output);
 		rp->output.name = str;
 		rp->iop = NULL;
@@ -963,7 +1000,7 @@ redirect_string(const char *str, size_t explen, bool not_string,
 			}
 			break;
 		default:
-			cant_happen();
+			cant_happen("invalid redirection type %d", (int) redirtype);
 		}
 
 		if (mode != NULL) {
@@ -1166,7 +1203,7 @@ close_one()
 			rp->flag |= RED_USED;
 			errno = 0;
 			if (rp->output.gawk_fclose(rp->output.fp, rp->output.opaque) != 0)
-				warning(_("close of `%s' failed: %s."),
+				warning(_("close of `%s' failed: %s"),
 					rp->value, strerror(errno));
 			rp->output.fp = NULL;
 			break;
@@ -1318,6 +1355,9 @@ close_redir(struct redirect *rp, bool exitwarn, two_way_close_type how)
 
 	if (rp == NULL)
 		return 0;
+	if ((rp->flag & RED_WRITE) && rp->output.fp)
+		/* flush before closing to leverage special error handling */
+		efflush(rp->output.fp, "flush", rp);
 	if (rp->output.fp == stdout || rp->output.fp == stderr)
 		goto checkwarn;		/* bypass closing, remove from list */
 
@@ -1340,6 +1380,9 @@ close_redir(struct redirect *rp, bool exitwarn, two_way_close_type how)
 		if (do_lint) {
 			if ((rp->flag & RED_PIPE) != 0)
 				lintwarn(_("failure status (%d) on pipe close of `%s': %s"),
+					 status, rp->value, s);
+			else if ((rp->flag & RED_TWOWAY) != 0)
+				lintwarn(_("failure status (%d) on two-way pipe close of `%s': %s"),
 					 status, rp->value, s);
 			else
 				lintwarn(_("failure status (%d) on file close of `%s': %s"),
@@ -1400,10 +1443,8 @@ non_fatal_flush_std_file(FILE *fp)
 		bool is_fatal = ! is_non_fatal_std(fp);
 
 		if (is_fatal) {
-#ifdef __MINGW32__
-			if (errno == 0 || errno == EINVAL)
-				w32_maybe_set_errno();
-#endif
+			os_maybe_set_errno();
+
 			if (errno == EPIPE)
 				die_via_sigpipe();
 			else
@@ -1454,13 +1495,13 @@ flush_io()
 					messagefunc = r_warning;
 
 				if ((rp->flag & RED_PIPE) != 0)
-					messagefunc(_("pipe flush of `%s' failed: %s."),
+					messagefunc(_("pipe flush of `%s' failed: %s"),
 						rp->value, strerror(errno));
 				else if ((rp->flag & RED_TWOWAY) != 0)
-					messagefunc(_("co-process flush of pipe to `%s' failed: %s."),
+					messagefunc(_("co-process flush of pipe to `%s' failed: %s"),
 						rp->value, strerror(errno));
 				else
-					messagefunc(_("file flush of `%s' failed: %s."),
+					messagefunc(_("file flush of `%s' failed: %s"),
 						rp->value, strerror(errno));
 				status++;
 			}
@@ -1500,10 +1541,8 @@ close_io(bool *stdio_problem, bool *got_EPIPE)
 	*stdio_problem = false;
 	/* we don't warn about stdout/stderr if EPIPE, but we do error exit */
 	if (fflush(stdout) != 0) {
-#ifdef __MINGW32__
-		if (errno == 0 || errno == EINVAL)
-			w32_maybe_set_errno();
-#endif
+		os_maybe_set_errno();
+
 		if (errno != EPIPE)
 			warning(_("error writing standard output: %s"), strerror(errno));
 		else
@@ -1513,10 +1552,8 @@ close_io(bool *stdio_problem, bool *got_EPIPE)
 		*stdio_problem = true;
 	}
 	if (fflush(stderr) != 0) {
-#ifdef __MINGW32__
-		if (errno == 0 || errno == EINVAL)
-			w32_maybe_set_errno();
-#endif
+		os_maybe_set_errno();
+
 		if (errno != EPIPE)
 			warning(_("error writing standard error: %s"), strerror(errno));
 		else
@@ -1560,7 +1597,7 @@ str2mode(const char *mode)
 
 	default:
 		ret = 0;		/* lint */
-		cant_happen();
+		cant_happen("invalid open mode \"%s\"", mode);
 	}
 	if (strchr(mode, 'b') != NULL)
 		ret |= O_BINARY;
@@ -1893,7 +1930,7 @@ strictopen:
 		if (openfd == INVALID_HANDLE && errno == ENOENT && save_errno)
 			errno = save_errno;
 	}
-#if defined(__EMX__) || defined(__MINGW32__)
+#if defined(__MINGW32__)
 	if (openfd == INVALID_HANDLE && errno == EACCES) {
 		/* On OS/2 and Windows directory access via open() is
 		   not permitted.  */
@@ -2309,11 +2346,9 @@ use_pipes:
 	int ptoc[2], ctop[2];
 	int pid;
 	int save_errno;
-#if defined(__EMX__) || defined(__MINGW32__)
+#if defined(__MINGW32__)
 	int save_stdout, save_stdin;
-#ifdef __MINGW32__
 	char *qcmd = NULL;
-#endif
 #endif
 
 	if (pipe(ptoc) < 0)
@@ -2327,7 +2362,7 @@ use_pipes:
 		return false;
 	}
 
-#if defined(__EMX__) || defined(__MINGW32__)
+#if defined(__MINGW32__)
 	save_stdin = dup(0);	/* duplicate stdin */
 	save_stdout = dup(1);	/* duplicate stdout */
 
@@ -2370,13 +2405,9 @@ use_pipes:
 	os_close_on_exec(save_stdout, str, "pipe", "from"); /* saved stdout of the parent process */
 
 	/* stderr does NOT get dup'ed onto child's stdout */
-#ifdef __EMX__
-	pid = spawnl(P_NOWAIT, "/bin/sh", "sh", "-c", str, NULL);
-#else  /* __MINGW32__ */
 	pid = spawnl(P_NOWAIT, getenv("ComSpec"), "cmd.exe", "/c",
 		     qcmd = quote_cmd(str), NULL);
 	efree(qcmd);
-#endif
 
 	/* restore stdin and stdout */
 	close(1);
@@ -2404,7 +2435,7 @@ use_pipes:
 		return false;
 	}
 
-#else /* NOT __EMX__, NOT __MINGW32__ */
+#else /* NOT __MINGW32__ */
 	if ((pid = fork()) < 0) {
 		save_errno = errno;
 		close(ptoc[0]); close(ptoc[1]);
@@ -2432,7 +2463,7 @@ use_pipes:
 		execl("/bin/sh", "sh", "-c", str, NULL);
 		_exit(errno == ENOENT ? 127 : 126);
 	}
-#endif /* NOT __EMX__, NOT __MINGW32__ */
+#endif /* NOT __MINGW32__ */
 
 	/* parent */
 	if ((BINMODE & BINMODE_INPUT) != 0)
@@ -2472,7 +2503,7 @@ use_pipes:
 	else
 		find_output_wrapper(& rp->output);
 
-#if !defined(__EMX__) && !defined(__MINGW32__)
+#if !defined(__MINGW32__)
 	os_close_on_exec(ctop[0], str, "pipe", "from");
 	os_close_on_exec(ptoc[1], str, "pipe", "from");
 
@@ -2542,7 +2573,7 @@ wait_any(int interesting)	/* pid of interest, if any */
 		for (redp = red_head; redp != NULL; redp = redp->next)
 			if (interesting == redp->pid) {
 				redp->pid = -1;
-				redp->status = status;
+				redp->status = sanitize_exit_status(status);
 				break;
 			}
 	}
@@ -2572,7 +2603,7 @@ wait_any(int interesting)	/* pid of interest, if any */
 			for (redp = red_head; redp != NULL; redp = redp->next)
 				if (pid == redp->pid) {
 					redp->pid = -1;
-					redp->status = status;
+					redp->status = sanitize_exit_status(status);
 					break;
 				}
 		}
@@ -2599,11 +2630,9 @@ gawk_popen(const char *cmd, struct redirect *rp)
 {
 	int p[2];
 	int pid;
-#if defined(__EMX__) || defined(__MINGW32__)
+#if defined(__MINGW32__)
 	int save_stdout;
-#ifdef __MINGW32__
 	char *qcmd = NULL;
-#endif
 #endif
 
 	/*
@@ -2617,7 +2646,7 @@ gawk_popen(const char *cmd, struct redirect *rp)
 	if (pipe(p) < 0)
 		fatal(_("cannot open pipe `%s': %s"), cmd, strerror(errno));
 
-#if defined(__EMX__) || defined(__MINGW32__)
+#if defined(__MINGW32__)
 	rp->iop = NULL;
 	save_stdout = dup(1); /* save stdout */
 	if (save_stdout == -1) {
@@ -2640,13 +2669,9 @@ gawk_popen(const char *cmd, struct redirect *rp)
 	os_close_on_exec(p[0], cmd, "pipe", "from"); /* pipe output: input of the parent process */
 	os_close_on_exec(save_stdout, cmd, "pipe", "from"); /* saved stdout of the parent process */
 
-#ifdef __EMX__
-	pid = spawnl(P_NOWAIT, "/bin/sh", "sh", "-c", cmd, NULL);
-#else  /* __MINGW32__ */
 	pid = spawnl(P_NOWAIT, getenv("ComSpec"), "cmd.exe", "/c",
 		     qcmd = quote_cmd(cmd), NULL);
 	efree(qcmd);
-#endif
 
 	/* restore stdout */
 	close(1);
@@ -2656,7 +2681,7 @@ gawk_popen(const char *cmd, struct redirect *rp)
 	}
 	close(save_stdout);
 
-#else /* NOT __EMX__, NOT __MINGW32__ */
+#else /* NOT __MINGW32__ */
 	if ((pid = fork()) == 0) {
 		if (close(1) == -1)
 			fatal(_("close of stdout in child failed: %s"),
@@ -2669,20 +2694,20 @@ gawk_popen(const char *cmd, struct redirect *rp)
 		execl("/bin/sh", "sh", "-c", cmd, NULL);
 		_exit(errno == ENOENT ? 127 : 126);
 	}
-#endif /* NOT __EMX__, NOT __MINGW32__ */
+#endif /* NOT __MINGW32__ */
 
 	if (pid == -1) {
 		close(p[0]); close(p[1]);
 		fatal(_("cannot create child process for `%s' (fork: %s)"), cmd, strerror(errno));
 	}
 	rp->pid = pid;
-#if !defined(__EMX__) && !defined(__MINGW32__)
+#if !defined(__MINGW32__)
 	if (close(p[1]) == -1) {
 		close(p[0]);
 		fatal(_("close of pipe failed: %s"), strerror(errno));
 	}
-#endif
 	os_close_on_exec(p[0], cmd, "pipe", "from");
+#endif
 	if ((BINMODE & BINMODE_INPUT) != 0)
 		os_setbinmode(p[0], O_BINARY);
 	rp->iop = iop_alloc(p[0], cmd, 0);
@@ -2895,8 +2920,8 @@ do_getline(int into_variable, IOBUF *iop)
 
 typedef struct {
 	const char *envname;
-	char **dfltp;		/* pointer to address of default path */
-	char **awkpath;		/* array containing library search paths */
+	const char **dfltp;	/* pointer to address of default path */
+	const char **awkpath;	/* array containing library search paths */
 	int max_pathlen;	/* length of the longest item in awkpath */
 } path_info;
 
@@ -2915,8 +2940,9 @@ static path_info pi_awklibpath = {
 static void
 init_awkpath(path_info *pi)
 {
-	char *path;
-	char *start, *end, *p;
+	const char *path;
+	const char *start, *end;
+	char *p;
 	int len, i;
 	int max_path;		/* (# of allocated paths)-1 */
 
@@ -2925,12 +2951,12 @@ init_awkpath(path_info *pi)
 		path = pi->dfltp[0];
 
 	/* count number of separators */
-	for (max_path = 0, p = path; *p; p++)
+	for (max_path = 0, p = (char *) path; *p; p++)
 		if (*p == envsep)
 			max_path++;
 
 	// +3 --> 2 for null entries at front and end of path, 1 for NULL end of list
-	ezalloc(pi->awkpath, char **, (max_path + 3) * sizeof(char *), "init_awkpath");
+	ezalloc(pi->awkpath, const char **, (max_path + 3) * sizeof(char *), "init_awkpath");
 
 	start = path;
 	i = 0;
@@ -3032,12 +3058,6 @@ find_source(const char *src, struct stat *stb, int *errcode, int is_extlib)
 	*errcode = 0;
 	if (src == NULL || *src == '\0')
 		return NULL;
-#ifdef __EMX__
-	char os2_src[strlen(src) + 1];
-
-	if (is_extlib)
-		src = os2_fixdllname(os2_src, src, sizeof(os2_src));
-#endif /* __EMX__ */
 	path = do_find_source(src, stb, errcode, pi);
 
 	if (path == NULL && is_extlib) {
@@ -3353,7 +3373,7 @@ iop_alloc(int fd, const char *name, int errno_val)
 
 	if (fd != INVALID_HANDLE)
 		fstat(fd, & iop->public.sbuf);
-#if defined(__EMX__) || defined(__MINGW32__)
+#if defined(__MINGW32__)
 	else if (errno_val == EISDIR) {
 		iop->public.sbuf.st_mode = (_S_IFDIR | _S_IRWXU);
 		iop->public.fd = FAKE_FD_VALUE;
@@ -3640,7 +3660,7 @@ again:
 		 * If still room in buffer, skip over null match
 		 * and restart search. Otherwise, return.
 		 */
-		if (bp + iop->scanoff < iop->dataend) {
+		if (bp + iop->scanoff <= iop->dataend) {
 			bp += iop->scanoff;
 			goto again;
 		}
@@ -3691,7 +3711,7 @@ again:
          * "abc" into the front of the next record. Ooops.
          *
          * The re->maybe_long member is true if the
-         * regex contains one of: + * ? |.  This is a very
+         * regex contains one of: + * ? | { }.  This is a very
          * simple heuristic, but in combination with the
          * "end of match within a few bytes of end of buffer"
          * check, should keep things reasonable.
@@ -4337,7 +4357,7 @@ get_read_timeout(IOBUF *iop)
  */
 
 static ssize_t
-read_with_timeout(int fd, char *buf, size_t size)
+read_with_timeout(int fd, void *buf, size_t size)
 {
 #if ! defined(VMS)
 	fd_set readfds;
@@ -4393,7 +4413,7 @@ read_with_timeout(int fd, char *buf, size_t size)
 
 /* gawk_fwrite --- like fwrite */
 
-static size_t
+size_t
 gawk_fwrite(const void *buf, size_t size, size_t count, FILE *fp, void *opaque)
 {
 	(void) opaque;

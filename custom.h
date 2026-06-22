@@ -11,7 +11,7 @@
  */
 
 /*
- * Copyright (C) 1995-2004, 2008, 2009, 2011, 2016, 2018, 2019, 2020,
+ * Copyright (C) 1995-2004, 2008, 2009, 2011, 2016, 2018-2022,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -60,14 +60,18 @@
 #define ULLONG_MAX __UINT64_MAX
 #endif /* ULLONG_MAX */
 #endif /* __VAX */
+#ifndef HAVE_STDINT_H
 typedef char int_least8_t;
 typedef unsigned char uint_least8_t;
 typedef short int_least16_t;
 typedef unsigned short uint_least16_t;
+typedef unsigned long uint_fast32_t;
+typedef long int_fast32_t;
 #ifndef __VAX
 typedef long long int_fast64_t;
 typedef unsigned long long uint_fast64_t;
 #endif /* __VAX */
+#endif
 #endif /* __VMS */
 
 
@@ -92,6 +96,12 @@ typedef unsigned long long uint_fast64_t;
 #define _XOPEN_SOURCE_EXTENDED 1
 #endif
 
+#ifdef __MVS__
+#ifndef _REGEX_INCLUDE_LIMITS_H
+#define _REGEX_INCLUDE_LIMITS_H 1
+#endif
+#endif
+
 /* Junk for dfa.[ch] */
 /* The __pure__ attribute was added in gcc 2.96.  */
 #if __GNUC__ > 2 || (__GNUC__ == 2 && __GNUC_MINOR__ >= 96)
@@ -99,5 +109,27 @@ typedef unsigned long long uint_fast64_t;
 #else
 # define _GL_ATTRIBUTE_PURE /* empty */
 #endif
+#define FLEXIBLE_ARRAY_MEMBER	1
+#define xreallocarray xnrealloc
+#define xizalloc xzalloc
+#define xicalloc xcalloc
+#define xirealloc xrealloc
+#define ximalloc xmalloc
 
-#include "mbsupport.h" /* defines stuff for DJGPP to fake MBS */
+#ifdef USE_PERSISTENT_MALLOC
+#include <stdlib.h>
+#include "pma.h"
+#define malloc	pma_malloc
+#define calloc	pma_calloc
+#define realloc	pma_realloc
+#define free	pma_free
+#else /* ! USE_PERSISTENT_MALLOC */
+#define pma_init(verbose, file)	0
+#define pma_get_root()	NULL
+#define pma_set_root(rootptr)	/* nothing */
+#define pma_errno 0
+#endif /* ! USE_PERSISTENT_MALLOC */
+
+#ifndef HAVE_STRSIGNAL
+char * strsignal(int signal);
+#endif /* ! HAVE_STRSIGNAL */

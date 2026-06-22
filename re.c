@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1991-2019 the Free Software Foundation, Inc.
+ * Copyright (C) 1991-2019, 2021, 2022, the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
  * AWK Programming Language.
@@ -144,7 +144,7 @@ make_regexp(const char *s, size_t len, bool ignorecase, bool dfa, bool canfatal)
 			case '7':
 				c2 = parse_escape(&src);
 				if (c2 < 0)
-					cant_happen();
+					cant_happen("received bad result %d from parse_escape()", c2);
 				/*
 				 * Unix awk treats octal (and hex?) chars
 				 * literally in re's, so escape regexp
@@ -258,10 +258,10 @@ make_regexp(const char *s, size_t len, bool ignorecase, bool dfa, bool canfatal)
 		refree(rp);
 		if (! canfatal) {
 			/* rerr already gettextized inside regex routines */
-			error("%s: /%s/", rerr, buf);
+			error("%s: /%.*s/", rerr, (int) len, s);
  			return NULL;
 		}
-		fatal("invalid regexp: %s: /%s/", rerr, buf);
+		fatal("invalid regexp: %s: /%.*s/", rerr, (int) len, s);
 	}
 
 	/* gack. this must be done *after* re_compile_pattern */
@@ -282,7 +282,7 @@ make_regexp(const char *s, size_t len, bool ignorecase, bool dfa, bool canfatal)
 	}
 
 	for (i = len - 1; i >= 0; i--) {
-		if (strchr("*+|?", buf[i]) != NULL) {
+		if (strchr("*+|?{}", buf[i]) != NULL) {
 			rp->maybe_long = true;
 			break;
 		}
@@ -388,7 +388,7 @@ void
 dfaerror(const char *s)
 {
 	fatal("%s", s);
-	exit(EXIT_FATAL);	/* for DJGPP */
+	exit(EXIT_FATAL);
 }
 
 /* re_cache_get --- populate regexp cache if empty */
@@ -478,10 +478,16 @@ resetup()
 
 	/*
 	 * Interval expressions are now on by default, as POSIX is
-	 * wide-spread enough that people want it. The do_intervals
-	 * variable remains for use with --traditional.
+	 * wide-spread enough that people want it.
+	 *
+	 * 2/2022: BWK awk has supported interval expressions since
+	 * March 2019, with an important fix added in Januay 2020.
+	 * So we add that support even for --traditional. It's easier to
+	 * do it here than to try to get the GLIBC / GNULIB folks to change
+	 * the definition of RE_SYNTAX_AWK, which likely would cause
+	 * binary compatibility issues.
 	 */
-	if (do_intervals)
+	if (do_traditional)
 		syn |= RE_INTERVALS | RE_INVALID_INTERVAL_ORD | RE_NO_BK_BRACES;
 
 	(void) re_set_syntax(syn);
@@ -613,7 +619,7 @@ check_bracket_exp(char *s, size_t length)
 	sp = s;
 
 again:
-	sp = sp2 = memchr(sp, '[', (end - sp));
+	sp = sp2 = (char *) memchr(sp, '[', (end - sp));
 	if (sp == NULL)
 		goto done;
 

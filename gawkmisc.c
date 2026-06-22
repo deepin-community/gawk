@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2004, 2010, 2011, 2017,
+ * Copyright (C) 1986, 1988, 1989, 1991-2004, 2010, 2011, 2017, 2022,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -32,12 +32,12 @@
 
 /* some old compilers don't grok #elif. sigh */
 
-#if defined(__EMX__) || defined(__DJGPP__) || defined(__MINGW32__)
+#if defined(__MINGW32__)
 #include "pc/gawkmisc.pc"
-#else /* not __DJGPP__, not __MINGW32__ */
+#else /* not __MINGW32__ */
 #if defined(VMS)
 #include "vms/gawkmisc.vms"
 #else /* not VMS */
 #include "posix/gawkmisc.c"
 #endif /* not VMS */
-#endif /* not __DJGPP__, not __MINGW32__ */
+#endif /* not __MINGW32__ */

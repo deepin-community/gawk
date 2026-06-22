@@ -1,7 +1,5 @@
 #!/usr/bin/make -f
 
-export DEB_BUILD_MAINT_OPTIONS = hardening=+all
-
 ifeq (sh4,$(shell dpkg-architecture -qDEB_HOST_ARCH))
   # Renesas SH(sh4) need -mieee option.
   # Without this option the fmtspcl test fails.
@@ -17,9 +15,11 @@ LOCALIAS=/usr/share/locale/locale.alias
 override_dh_auto_configure:
 	dh_auto_configure -- --disable-rpath
 	touch --date="Jan 01 2000" \
-            doc/gawktexi.in doc/gawk.texi doc/gawkinet.texi \
-            doc/gawkworkflow.texi doc/gawkworkflow.info \
-            doc/gawk.info doc/gawkinet.info doc/sidebar.awk
+	    doc/gawktexi.in doc/sidebar.awk \
+	    doc/gawk.texi doc/gawk.info \
+	    doc/gawkinet.texi doc/gawkinet.info \
+	    doc/gawkworkflow.texi doc/gawkworkflow.info \
+	    doc/pm-gawk.texi doc/pm-gawk.info
 
 override_dh_auto_test:
 	# Only run the testsuite if it's wanted.

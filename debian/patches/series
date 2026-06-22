@@ -1,1 +1,3 @@
-CVE-2023-4156.patch
+0001-Build-pma-without-assertions-by-default.patch
+0002-Fix-field-assignment-bug.patch
+0003-Fix-possible-fd-leak-in-readdir-extension.patch

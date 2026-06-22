@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2020,
+ * Copyright (C) 1986, 1988, 1989, 1991-2022,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -25,7 +25,7 @@
  */
 
 /* FIX THIS BEFORE EVERY RELEASE: */
-#define UPDATE_YEAR	2020
+#define UPDATE_YEAR	2022
 
 #include "awk.h"
 #include "getopt.h"
@@ -73,7 +73,8 @@ static const char *platform_name();
 
 /* These nodes store all the special variables AWK uses */
 NODE *ARGC_node, *ARGIND_node, *ARGV_node, *BINMODE_node, *CONVFMT_node;
-NODE *ENVIRON_node, *ERRNO_node, *FIELDWIDTHS_node, *FILENAME_node;
+static NODE *ENVIRON_node;
+NODE *ERRNO_node, *FIELDWIDTHS_node, *FILENAME_node;
 NODE *FNR_node, *FPAT_node, *FS_node, *IGNORECASE_node, *LINT_node;
 NODE *NF_node, *NR_node, *OFMT_node, *OFS_node, *ORS_node, *PROCINFO_node;
 NODE *RLENGTH_node, *RSTART_node, *RS_node, *RT_node, *SUBSEP_node;
@@ -96,7 +97,7 @@ char *TEXTDOMAIN;
  *	set_CONVFMT -> fmt_index -> force_string: gets NULL CONVFMT
  * Fun, fun, fun, fun.
  */
-char *CONVFMT = "%.6g";
+const char *CONVFMT = "%.6g";
 
 NODE *Nnull_string;		/* The global null string */
 
@@ -145,13 +146,15 @@ static void parse_args(int argc, char **argv);
 static void set_locale_stuff(void);
 static bool stopped_early = false;
 
-int do_flags = false;
+bool using_persistent_malloc = false;
+enum do_flag_values do_flags = DO_FLAG_NONE;
+bool do_itrace = false;			/* provide simple instruction trace */
 bool do_optimize = true;		/* apply default optimizations */
 static int do_nostalgia = false;	/* provide a blast from the past */
 static int do_binary = false;		/* hands off my data! */
 static int do_version = false;		/* print version info */
 static const char *locale = "";		/* default value to setlocale */
-static char *locale_dir = LOCALEDIR;	/* default locale dir */
+static const char *locale_dir = LOCALEDIR;	/* default locale dir */
 
 int use_lc_numeric = false;	/* obey locale for decimal point */
 
@@ -199,12 +202,14 @@ static const struct option optab[] = {
 #if defined(YYDEBUG) || defined(GAWKDEBUG)
 	{ "parsedebug",		no_argument,		NULL,	'Y' },
 #endif
+	{ "persist",		optional_argument,	NULL,	'T' },
 	{ "posix",		no_argument,		NULL,	'P' },
 	{ "pretty-print",	optional_argument,	NULL,	'o' },
 	{ "profile",		optional_argument,	NULL,	'p' },
 	{ "re-interval",	no_argument,		NULL,	'r' },
 	{ "sandbox",		no_argument,		NULL, 	'S' },
 	{ "source",		required_argument,	NULL,	'e' },
+	{ "trace",		no_argument,		NULL,	'I' },
 	{ "traditional",	no_argument,		NULL,	'c' },
 	{ "use-lc-numeric",	no_argument,		& use_lc_numeric, 1 },
 	{ "version",		no_argument,		& do_version, 'V' },
@@ -218,11 +223,32 @@ main(int argc, char **argv)
 {
 	int i;
 	char *extra_stack;
-	int have_srcfile = 0;
+	bool have_srcfile = false;
 	SRCFILE *s;
 	char *cp;
+	const char *persist_file = getenv("GAWK_PERSIST_FILE");	/* backing file for PMA */
 #if defined(LOCALEDEBUG)
 	const char *initial_locale;
+#endif
+
+	myname = gawk_name(argv[0]);
+
+	int pma_result = pma_init(1, persist_file);
+	if (pma_result != 0) {
+		// don't use 'fatal' routine, it seems to need to
+		// allocate memory
+		fprintf(stderr, _("%s: fatal: persistent memory allocator failed to initialize: return value %d, pma.c line: %d.\n"),
+				myname, pma_result, pma_errno);
+		exit(EXIT_FATAL);
+	}
+
+	using_persistent_malloc = (persist_file != NULL);
+#ifndef USE_PERSISTENT_MALLOC
+	if (using_persistent_malloc)
+		warning(_("persistent memory is not supported"));
+#endif
+#ifdef HAVE_MPFR
+	mp_set_memory_functions(mpfr_mem_alloc, mpfr_mem_realloc, mpfr_mem_free);
 #endif
 
 	/* do these checks early */
@@ -231,12 +257,10 @@ main(int argc, char **argv)
 
 #ifdef HAVE_MCHECK_H
 #ifdef HAVE_MTRACE
-	if (do_tidy_mem)
+	if (! using_persistent_malloc && do_tidy_mem)
 		mtrace();
 #endif /* HAVE_MTRACE */
 #endif /* HAVE_MCHECK_H */
-
-	myname = gawk_name(argv[0]);
 	os_arg_fixup(&argc, &argv); /* emulate redirection, expand wildcards */
 
 	if (argc < 2)
@@ -357,15 +381,20 @@ main(int argc, char **argv)
 	if (do_binary) {
 		if (do_posix)
 			warning(_("`--posix' overrides `--characters-as-bytes'"));
-		else
+		else {
 			gawk_mb_cur_max = 1;	/* hands off my data! */
 #if defined(LC_ALL)
-		setlocale(LC_ALL, "C");
+			setlocale(LC_ALL, "C");
 #endif
+		}
 	}
 
-	if (do_lint && os_is_setuid())
-		lintwarn(_("running %s setuid root may be a security problem"), myname);
+	if (do_lint) {
+		if (os_is_setuid())
+			lintwarn(_("running %s setuid root may be a security problem"), myname);
+		if (do_intervals)
+			lintwarn(_("The -r/--re-interval options no longer have any effect"));
+	}
 
 	if (do_debug)	/* Need to register the debugger pre-exec hook before any other */
 		init_debug();
@@ -440,7 +469,7 @@ main(int argc, char **argv)
 		if (s->stype == SRC_EXTLIB)
 			load_ext(s->fullpath);
 		else if (s->stype != SRC_INC)
-			have_srcfile++;
+			have_srcfile = true;
 	}
 
 	/* do version check after extensions are loaded to get extension info */
@@ -601,6 +630,7 @@ usage(int exitval, FILE *fp)
 	fputs(_("\t-g\t\t\t--gen-pot\n"), fp);
 	fputs(_("\t-h\t\t\t--help\n"), fp);
 	fputs(_("\t-i includefile\t\t--include=includefile\n"), fp);
+	fputs(_("\t-I\t\t\t--trace\n"), fp);
 	fputs(_("\t-l library\t\t--load=library\n"), fp);
 	/*
 	 * TRANSLATORS: the "fatal", "invalid" and "no-ext" here are literal
@@ -632,7 +662,8 @@ usage(int exitval, FILE *fp)
 	/* This is one string to make things easier on translators. */
 	/* TRANSLATORS: --help output (end)
 	   no-wrap */
-	fputs(_("\nTo report bugs, see node `Bugs' in `gawk.info'\n\
+	fputs(_("\nTo report bugs, use the `gawkbug' program.\n\
+For full instructions, see the node `Bugs' in `gawk.info'\n\
 which is section `Reporting Problems and Bugs' in the\n\
 printed version.  This same information may be found at\n\
 https://www.gnu.org/software/gawk/manual/html_node/Bugs.html.\n\
@@ -650,10 +681,8 @@ By default it reads standard input and writes standard output.\n\n"), fp);
 	fflush(fp);
 
 	if (ferror(fp)) {
-#ifdef __MINGW32__
-		if (errno == 0 || errno == EINVAL)
-			w32_maybe_set_errno();
-#endif
+		os_maybe_set_errno();
+
 		/* don't warn about stdout/stderr if EPIPE, but do error exit */
 		if (errno == EPIPE)
 			die_via_sigpipe();
@@ -700,10 +729,8 @@ along with this program. If not, see http://www.gnu.org/licenses/.\n");
 	fflush(stdout);
 
 	if (ferror(stdout)) {
-#ifdef __MINGW32__
-		if (errno == 0 || errno == EINVAL)
-			w32_maybe_set_errno();
-#endif
+		os_maybe_set_errno();
+
 		/* don't warn about stdout if EPIPE, but do error exit */
 		if (errno != EPIPE)
 			warning(_("error writing standard output: %s"), strerror(errno));
@@ -915,6 +942,12 @@ load_environ()
 	been_here = true;
 
 	ENVIRON_node = install_symbol(estrdup("ENVIRON", 7), Node_var_array);
+
+	// Force string functions; if the first element in environ[]
+	// looks like "0=foo" we end up with the cint_funcs and that's
+	// not what we want, we just get core dumps.
+	ENVIRON_node->array_funcs = & str_array_func;
+
 	for (i = 0; environ[i] != NULL; i++) {
 		static char nullstr[] = "";
 
@@ -976,7 +1009,6 @@ load_procinfo_argv()
 	// hook it into PROCINFO
 	sub = make_string("argv", 4);
 	assoc_set(PROCINFO_node, sub, argv_array);
-
 }
 
 /* load_procinfo --- populate the PROCINFO array */
@@ -1199,6 +1231,7 @@ arg_assign(char *arg, bool initing)
 
 	cp2 = cp + strlen(cp) - 1;	// end char
 	if (! do_traditional
+	    && strlen(cp) >= 3		// '@/' doesn't do it.
 	    && cp[0] == '@' && cp[1] == '/' && *cp2 == '/') {
 		// typed regex
 		size_t len = strlen(cp) - 3;
@@ -1288,7 +1321,7 @@ catchsig(int sig)
 		fflush(NULL);
 		abort();
 	} else
-		cant_happen();
+		cant_happen("unexpected signal, number %d (%s)", sig, strsignal(sig));
 	/* NOTREACHED */
 }
 
@@ -1337,6 +1370,42 @@ nostalgia()
 	abort();
 }
 
+#ifdef USE_PERSISTENT_MALLOC
+/* get_pma_version --- get a usable version string out of PMA */
+
+const char *
+get_pma_version()
+{
+	static char buf[200];
+	const char *open, *close;
+	char *out;
+	const char *in;
+
+	/*
+	 * The default version string looks like this:
+	 * 2022.08Aug.03.1659520468 (Avon 7)
+	 * Yucko. Just pull out the bits between the parens.
+	 */
+
+	open = strchr(pma_version, '(');
+	if (open == NULL)
+		return pma_version;	// sigh.
+
+	open++;
+	close = strchr(open, ')');
+	if (close == NULL)
+		return pma_version;	// sigh, again.
+
+	// copy over the short name
+	for (out = buf, in = open; in < close;)
+		*out++ = *in++;
+
+	*out++ = '\0';
+
+	return buf;
+}
+#endif
+
 /* version --- print version message */
 
 static void
@@ -1344,10 +1413,13 @@ version()
 {
 	printf("%s", version_string);
 #ifdef DYNAMIC
-	printf(", API: %d.%d", GAWK_API_MAJOR_VERSION, GAWK_API_MINOR_VERSION);
+	printf(", API %d.%d", GAWK_API_MAJOR_VERSION, GAWK_API_MINOR_VERSION);
+#endif
+#ifdef USE_PERSISTENT_MALLOC
+	printf(", PMA %s", get_pma_version());
 #endif
 #ifdef HAVE_MPFR
-	printf(" (GNU MPFR %s, GNU MP %s)", mpfr_get_version(), gmp_version);
+	printf(", (GNU MPFR %s, GNU MP %s)", mpfr_get_version(), gmp_version);
 #endif
 	printf("\n");
 	print_ext_versions();
@@ -1519,7 +1591,7 @@ parse_args(int argc, char **argv)
 	/*
 	 * The + on the front tells GNU getopt not to rearrange argv.
 	 */
-	const char *optlist = "+F:f:v:W;bcCd::D::e:E:ghi:l:L::nNo::Op::MPrSstVYZ:";
+	const char *optlist = "+F:f:v:W;bcCd::D::e:E:ghi:Il:L::nNo::Op::MPrSstVYZ:";
 	int old_optind;
 	int c;
 	char *scan;
@@ -1614,6 +1686,10 @@ parse_args(int argc, char **argv)
 			(void) add_srcfile(SRC_INC, optarg, srcfiles, NULL, NULL);
 			break;
 
+		case 'I':
+			do_itrace = true;
+			break;
+
 		case 'l':
 			(void) add_srcfile(SRC_EXTLIB, optarg, srcfiles, NULL, NULL);
 			break;
@@ -1683,6 +1759,8 @@ parse_args(int argc, char **argv)
 			break;
 
 		case 'r':
+			// This no longer has any effect. It remains for the
+			// lint check in main().
 			do_flags |= DO_INTERVALS;
  			break;
 
@@ -1692,6 +1770,16 @@ parse_args(int argc, char **argv)
 
 		case 'S':
 			do_flags |= DO_SANDBOX;
+			break;
+
+		case 'T':	// --persist[=file]
+#ifdef USE_PERSISTENT_MALLOC
+			if (optarg == NULL)
+				optarg = "/some/file";
+			fatal(_("Use `GAWK_PERSIST_FILE=%s gawk ...' instead of --persist."), optarg);
+#else
+			warning(_("Persistent memory is not supported."));
+#endif /* USE_PERSISTENT_MALLOC */
 			break;
 
 		case 'V':
@@ -1820,10 +1908,6 @@ platform_name()
 	return "vms";
 #elif defined(__MINGW32__)
 	return "mingw";
-#elif defined(__DJGPP__)
-	return "djgpp";
-#elif defined(__EMX__)
-	return "os2";
 #elif defined(USE_EBCDIC)
 	return "os390";
 #else
