@@ -7,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 1995 - 2001, 2003-2014, 2016-2020,
+ * Copyright (C) 1995 - 2001, 2003-2014, 2016-2020, 2022,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -128,6 +128,7 @@ make_builtin(const char *name_space, const awk_ext_func_t *funcinfo)
 			/* multiple extension() calls etc. */
 			if (do_lint)
 				lintwarn(_("make_builtin: function `%s' already defined"), name);
+			free((void *) install_name);
 			return awk_false;
 		} else
 			/* variable name etc. */
@@ -199,7 +200,7 @@ get_actual_argument(NODE *t, int i, bool want_array)
 	pc = TOP()->code_ptr;	/* Op_ext_builtin instruction */
 	fname = (pc + 1)->func_name;
 
-	if (t->type == Node_var_new) {
+	if (t->type == Node_var_new || t->type == Node_elem_new) {
 		if (want_array)
 			return force_array(t, false);
 		else {

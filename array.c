@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2014, 2016, 2018, 2019, 2020,
+ * Copyright (C) 1986, 1988, 1989, 1991-2014, 2016, 2018-2022,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -111,7 +111,8 @@ null_array(NODE *symbol)
 	symbol->type = Node_var_array;
 	symbol->array_funcs = & null_array_func;
 	symbol->buckets = NULL;
-	symbol->table_size = symbol->array_size = 0;
+	symbol->table_size = 0;
+	symbol->array_size = 0;
 	symbol->array_capacity = 0;
 	symbol->flags = 0;
 
@@ -314,7 +315,7 @@ array_vname(const NODE *symbol)
 
 /*
  *  force_array --- proceed to the actual Node_var_array,
- *	change Node_var_new to an array.
+ *	change Node_var_new or Node_elem_new to an array.
  *	If canfatal and type isn't good, die fatally,
  *	otherwise return the final actual value.
  */
@@ -333,6 +334,11 @@ force_array(NODE *symbol, bool canfatal)
 	}
 
 	switch (symbol->type) {
+	case Node_elem_new:
+		efree(symbol->stptr);
+		symbol->stptr = NULL;
+		symbol->stlen = 0;
+		/* fall through */
 	case Node_var_new:
 		symbol->xarray = NULL;	/* make sure union is as it should be */
 		null_array(symbol);
@@ -709,7 +715,7 @@ value_info(NODE *n)
 					n->stfmt == STFMT_UNUSED ? "<unused>"
 					: fmt_list[n->stfmt]->stptr);
 #ifdef HAVE_MPFR
-		fprintf(output_fp, ", RNDMODE=\"%c\"", n->strndmode);
+		fprintf(output_fp, ", ROUNDMODE=\"%c\"", n->strndmode);
 #endif
 	}
 
@@ -801,6 +807,7 @@ asort_actual(int nargs, sort_context_t ctxt)
 	unsigned long num_elems, i;
 	const char *sort_str;
 	char save;
+	const char *name = (ctxt == ASORT ? "asort" : "asorti");	// D.R.Y.
 
 	if (nargs == 3)  /* 3rd optional arg */
 		s = POP_STRING();
@@ -821,33 +828,38 @@ asort_actual(int nargs, sort_context_t ctxt)
 	if (nargs >= 2) {  /* 2nd optional arg */
 		dest = POP_PARAM();
 		if (dest->type != Node_var_array) {
-			fatal(_("%s: second argument is not an array"),
-				ctxt == ASORT ? "asort" : "asorti");
+			fatal(_("%s: second argument is not an array"), name);
 		}
+		check_symtab_functab(dest, name,
+				_("%s: cannot use %s as second argument"));
 	}
 
 	array = POP_PARAM();
 	if (array->type != Node_var_array) {
-		fatal(_("%s: first argument is not an array"),
-			ctxt == ASORT ? "asort" : "asorti");
+		fatal(_("%s: first argument is not an array"), name);
 	}
-	else if (array == symbol_table)
-		fatal(_("%s: first argument cannot be SYMTAB"),
-			ctxt == ASORT ? "asort" : "asorti");
-	else if (array == func_table)
-		fatal(_("%s: first argument cannot be FUNCTAB"),
-			ctxt == ASORT ? "asort" : "asorti");
+	else if (array == symbol_table && dest == NULL)
+		fatal(_("%s: first argument cannot be SYMTAB without a second argument"), name);
+	else if (array == func_table && dest == NULL)
+		fatal(_("%s: first argument cannot be FUNCTAB without a second argument"), name);
 
 	if (dest != NULL) {
+		static bool warned = false;
+
+		if (nargs == 2 && array == dest && ! warned) {
+			warned = true;
+			lintwarn(_("asort/asorti: using the same array as source and destination without "
+				   "a third argument is silly."));
+		}
 		for (r = dest->parent_array; r != NULL; r = r->parent_array) {
 			if (r == array)
 				fatal(_("%s: cannot use a subarray of first argument for second argument"),
-					ctxt == ASORT ? "asort" : "asorti");
+					name);
 		}
 		for (r = array->parent_array; r != NULL; r = r->parent_array) {
 			if (r == dest)
 				fatal(_("%s: cannot use a subarray of second argument for first argument"),
-					ctxt == ASORT ? "asort" : "asorti");
+					name);
 		}
 	}
 
@@ -906,7 +918,15 @@ asort_actual(int nargs, sort_context_t ctxt)
 
 			if (r->type == Node_val)
 				value = dupnode(r);
-			else {
+			else if (r->type == Node_var)
+				/* SYMTAB ... */
+				value = dupnode(r->var_value);
+			else if (r->type == Node_builtin_func
+				 || r->type == Node_func
+				 || r->type == Node_ext_func) {
+				/* FUNCTAB ... */
+				value = make_string(r->vname, strlen(r->vname));
+			} else {
 				NODE *arr;
 				arr = make_array();
 				subs = force_string(subs);
@@ -1151,6 +1171,7 @@ do_sort_up_value_type(const void *p1, const void *p2)
 		Node_func,
 		Node_ext_func,
 		Node_var_new,
+		Node_elem_new,
 		Node_var,
 		Node_var_array,
 		Node_val,
@@ -1197,11 +1218,12 @@ do_sort_up_value_type(const void *p1, const void *p2)
 	(void) fixtype(n1);
 	(void) fixtype(n2);
 
+	/* 3a. Numbers first */
 	if ((n1->flags & NUMBER) != 0 && (n2->flags & NUMBER) != 0) {
 		return cmp_numbers(n1, n2);
 	}
 
-	/* 3. All numbers are less than all strings. This is aribitrary. */
+	/* 3b. All numbers are less than all strings. This is aribitrary. */
 	if ((n1->flags & NUMBER) != 0 && (n2->flags & STRING) != 0) {
 		return -1;
 	} else if ((n1->flags & STRING) != 0 && (n2->flags & NUMBER) != 0) {
@@ -1412,4 +1434,27 @@ assoc_list(NODE *symbol, const char *sort_str, sort_context_t sort_ctxt)
 	}
 
 	return list;
+}
+
+/* new_array_element --- return a new empty element node */
+
+NODE *
+new_array_element(void)
+{
+	NODE *n = make_number(0.0);
+	char *sp;
+
+	emalloc(sp, char *, 2, "new_array_element");
+	sp[0] = sp[1] = '\0';
+
+	n->stptr = sp;
+	n->stlen = 0;
+	n->stfmt = STFMT_UNUSED;
+
+	n->flags |= (MALLOC|STRING|STRCUR);
+
+	n->type = Node_elem_new;
+	n->valref = 1;
+
+	return n;
 }

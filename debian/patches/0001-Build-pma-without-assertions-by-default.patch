@@ -1,0 +1,72 @@
+From bd917e9790981e1ec318c7e42fc5e4e1ccaf0d54 Mon Sep 17 00:00:00 2001
+From: "Arnold D. Robbins" <arnold@skeeve.com>
+Date: Wed, 23 Nov 2022 09:32:10 -0500
+Subject: Build pma without assertions by default.
+
+---
+ support/ChangeLog   | 6 ++++++
+ support/Makefile.am | 2 ++
+ support/Makefile.in | 6 ++++--
+ 3 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/support/ChangeLog b/support/ChangeLog
+index ac12d9b4..382301ca 100644
+--- a/support/ChangeLog
++++ b/support/ChangeLog
+@@ -1,3 +1,9 @@
++2022-11-23         Arnold D. Robbins     <arnold@skeeve.com>
++
++	* Makefile.am: Add -DNDEBUG to CFLAGS if building pma. Makes
++	pma run MUCH faster. Should have done this at the 5.2.0 release.
++	Oops.
++
+ 2022-11-17         Arnold D. Robbins     <arnold@skeeve.com>
+ 
+ 	* 5.2.1: Release tar ball made.
+diff --git a/support/Makefile.am b/support/Makefile.am
+index 51ddb6e2..2f172b6a 100644
+--- a/support/Makefile.am
++++ b/support/Makefile.am
+@@ -77,6 +77,8 @@ libsupport_a_SOURCES = \
+ 
+ if USE_PERSISTENT_MALLOC
+ libsupport_a_SOURCES += pma.c pma.h
++CFLAGS += -DNDEBUG
++AM_CFLAGS += -DNDEBUG
+ endif
+ 
+ # For some make's, e.g. OpenBSD, that don't define this
+diff --git a/support/Makefile.in b/support/Makefile.in
+index b977b5c1..1f5b209f 100644
+--- a/support/Makefile.in
++++ b/support/Makefile.in
+@@ -113,6 +113,8 @@ POST_UNINSTALL = :
+ build_triplet = @build@
+ host_triplet = @host@
+ @USE_PERSISTENT_MALLOC_TRUE@am__append_1 = pma.c pma.h
++@USE_PERSISTENT_MALLOC_TRUE@am__append_2 = -DNDEBUG
++@USE_PERSISTENT_MALLOC_TRUE@am__append_3 = -DNDEBUG
+ subdir = support
+ ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
+ am__aclocal_m4_deps = $(top_srcdir)/m4/arch.m4 \
+@@ -235,7 +237,7 @@ AUTOMAKE = @AUTOMAKE@
+ AWK = @AWK@
+ CC = @CC@
+ CCDEPMODE = @CCDEPMODE@
+-CFLAGS = @CFLAGS@
++CFLAGS = @CFLAGS@ $(am__append_2)
+ CPP = @CPP@
+ CPPFLAGS = @CPPFLAGS@
+ CSCOPE = @CSCOPE@
+@@ -360,7 +362,7 @@ target_alias = @target_alias@
+ top_build_prefix = @top_build_prefix@
+ top_builddir = @top_builddir@
+ top_srcdir = @top_srcdir@
+-AM_CFLAGS = @CFLAGS@
++AM_CFLAGS = @CFLAGS@ $(am__append_3)
+ AM_LDFLAGS = @LDFLAGS@
+ 
+ # Stuff to include in the dist that doesn't need it's own
+-- 
+2.30.2
+

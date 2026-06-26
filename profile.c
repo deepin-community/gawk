@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1999-2020 the Free Software Foundation, Inc.
+ * Copyright (C) 1999-2022 the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
  * AWK Programming Language.
@@ -119,23 +119,18 @@ set_prof_file(const char *file)
 void
 init_profiling_signals()
 {
-#ifdef __DJGPP__
-	signal(SIGINT, dump_and_exit);
-	signal(SIGQUIT, just_dump);
-#else  /* !__DJGPP__ */
 #ifdef SIGHUP
 	signal(SIGHUP, dump_and_exit);
 #endif
 #ifdef SIGUSR1
 	signal(SIGUSR1, just_dump);
 #endif
-#endif /* !__DJGPP__ */
 }
 
 /* indent --- print out enough tabs */
 
 static void
-indent(long count)
+indent(exec_count_t count)
 {
 	int i;
 
@@ -143,7 +138,7 @@ indent(long count)
 		if (count == 0)
 			fprintf(prof_fp, "\t");
 		else
-			fprintf(prof_fp, "%6ld  ", count);
+			fprintf(prof_fp, EXEC_COUNT_PROFILE_FMT "  ", count);
 	}
 
 	assert(indent_level >= 0);
@@ -179,7 +174,7 @@ pp_push(int type, char *s, int flag, INSTRUCTION *comment)
 	n->pp_str = s;
 	n->pp_len = strlen(s);
 	n->flags = flag;
-	n->type = type;
+	n->type = (NODETYPE) type;
 	n->pp_next = pp_stack;
 	n->pp_comment = comment;
 	pp_stack = n;
@@ -297,7 +292,7 @@ pprint(INSTRUCTION *startp, INSTRUCTION *endp, int flags)
 					ip2 = (pc + 1)->lasti;
 
 					if (do_profile && ip1->exec_count > 0)
-						fprintf(prof_fp, " # %ld", ip1->exec_count);
+						fprintf(prof_fp, " # " EXEC_COUNT_FMT, ip1->exec_count);
 
 					end_line(ip1);
 					skip_comment = true;
@@ -373,7 +368,7 @@ pprint(INSTRUCTION *startp, INSTRUCTION *endp, int flags)
 				break;
 
 			default:
-				cant_happen();
+				cant_happen("got unexpected type %s", nodetype2str(m->type));
 			}
 
 			switch (pc->opcode) {
@@ -580,7 +575,7 @@ cleanup:
 
 		case Op_K_delete_loop:
 			/* Efficency hack not in effect because of exec_count instruction */
-			cant_happen();
+			cant_happen("unexpected opcode %s", opcode2str(pc->opcode));
 			break;
 
 		case Op_in_array:
@@ -646,7 +641,7 @@ cleanup:
 		{
 			const char *fname;
 			if (pc->opcode == Op_builtin) {
-				bool prepend_awk = (current_namespace != awk_namespace && strcmp(current_namespace, "awk") != 0);
+				bool prepend_awk = (current_namespace != awk_namespace && strcmp(current_namespace, awk_namespace) != 0);
 				fname = getfname(pc->builtin, prepend_awk);
 			} else
 				fname = (pc + 1)->func_name;
@@ -668,7 +663,7 @@ cleanup:
 		case Op_K_print_rec:
 			if (pc->opcode == Op_K_print_rec)
 				// instead of `print $0', just `print'
-				tmp = strdup("");
+				tmp = estrdup("", 0);
 			else if (pc->redir_type != 0) {
 				// Avoid turning printf("hello\n") into printf(("hello\n"))
 				NODE *n = pp_top();
@@ -678,7 +673,7 @@ cleanup:
 				    && n->pp_str[n->pp_len - 1] == ')') {
 					n = pp_pop();
 
-					tmp = strdup(n->pp_str);
+					tmp = estrdup(n->pp_str, strlen(n->pp_str));
 					pp_free(n);
 				} else
 					tmp = pp_list(pc->expr_count, "()", ", ");
@@ -781,7 +776,7 @@ cleanup:
 		case Op_indirect_func_call:
 		case Op_func_call:
 		{
-			char *pre;
+			const char *pre;
  			int pcount;
 			bool malloced = false;
 			char *fname = adjust_namespace(pc->func_name, & malloced);
@@ -998,9 +993,11 @@ cleanup:
 			fprintf(prof_fp, "%s (", op2str(pc->opcode));
 			pprint(pc->nexti, ip1->switch_start, NO_PPRINT_FLAGS);
 			t1 = pp_pop();
-			fprintf(prof_fp, "%s) {\n", t1->pp_str);
+			fprintf(prof_fp, "%s) {", t1->pp_str);
 			if (pc->comment)
 				print_comment(pc->comment, 0);
+			else
+				fprintf(prof_fp, "\n");
 			pp_free(t1);
 			pprint(ip1->switch_start, ip1->switch_end, NO_PPRINT_FLAGS);
 			indent(SPACEOVER);
@@ -1022,9 +1019,11 @@ cleanup:
 
 			indent_in();
 			if (pc->comment != NULL) {
-				if (pc->comment->memory->comment_type == EOL_COMMENT)
+				if (pc->comment->memory->comment_type == EOL_COMMENT) {
 					fprintf(prof_fp, "\t%s", pc->comment->memory->stptr);
-				else {
+					if (pc->comment->comment != NULL)
+						print_comment(pc->comment->comment, indent_level);
+				} else {
 					fprintf(prof_fp, "\n");
 					print_comment(pc->comment, indent_level);
 				}
@@ -1043,7 +1042,7 @@ cleanup:
 
 			ip1 = pc->branch_if;
 			if (ip1->exec_count > 0)
-				fprintf(prof_fp, " # %ld", ip1->exec_count);
+				fprintf(prof_fp, " # " EXEC_COUNT_FMT, ip1->exec_count);
 			ip1 = end_line(ip1);
 			indent_in();
 			if (pc->comment != NULL)
@@ -1218,7 +1217,7 @@ cleanup:
 			break;
 
 		default:
-			cant_happen();
+			cant_happen("unexpected opcode %s", opcode2str(pc->opcode));
 		}
 
 		if (pc == endp)
@@ -1787,7 +1786,7 @@ pp_list(int nargs, const char *paren, const char *delim)
 			len += r->pp_len + delimlen;
 			if (r->pp_comment != NULL) {
 				comment = (INSTRUCTION *) r->pp_comment;
-				len += comment->memory->stlen + indent_level + 1;	// comment\n ident
+				len += comment->memory->stlen + indent_level + 1;	// comment\n indent
 			}
 		}
 		if (paren != NULL) {
@@ -2059,6 +2058,9 @@ pp_namespace(const char *name, INSTRUCTION *comment)
 	// info saved in Op_namespace instructions.
 	current_namespace = name;
 
+	// force newline, could be after a comment
+	fprintf(prof_fp, "\n");
+
 	if (do_profile)
 		indent(SPACEOVER);
 
@@ -2094,7 +2096,7 @@ adjust_namespace(char *name, bool *malloced)
 	// unadorned name from symbol table, add awk:: if not in awk:: n.s.
 	if (strchr(name, ':') == NULL &&
 	    current_namespace != awk_namespace &&	// can be equal if namespace never changed
-	    strcmp(current_namespace, "awk") != 0 &&
+	    strcmp(current_namespace, awk_namespace) != 0 &&
 	    ! is_all_upper(name)) {
 		char *buf;
 		size_t len = 5 + strlen(name) + 1;
@@ -2109,7 +2111,8 @@ adjust_namespace(char *name, bool *malloced)
 	// qualifed name, remove <ns>:: if in that n.s.
 	size_t len = strlen(current_namespace);
 
-	if (strncmp(current_namespace, name, len) == 0) {
+	if (strncmp(current_namespace, name, len) == 0 &&
+	    name[len] == ':' && name[len+1] == ':') {
 		char *ret = name + len + 2;
 
 		return ret;

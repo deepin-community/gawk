@@ -1,7 +1,8 @@
 #
 # doc/Makefile.am --- automake input file for gawk
 #
-# Copyright (C) 2000, 2001, 2002, 2004, 2005, 2007, 2010, 2011, 2016, 2017
+# Copyright (C) 2000, 2001, 2002, 2004, 2005, 2007, 2010, 2011, 2016, 2017,
+# 2021, 2022,
 # the Free Software Foundation, Inc.
 #
 # This file is part of GAWK, the GNU implementation of the
@@ -24,9 +25,9 @@
 
 ## process this file with automake to produce Makefile.in
 
-info_TEXINFOS = gawk.texi gawkinet.texi gawkworkflow.texi
+info_TEXINFOS = gawk.texi gawkinet.texi gawkworkflow.texi pm-gawk.texi
 
-man_MANS = gawk.1
+man_MANS = gawk.1 gawkbug.1 pm-gawk.1
 
 EXTRA_DIST = ChangeLog ChangeLog.0 ChangeLog.1 \
 	README.card ad.block setter.outline \
@@ -48,12 +49,12 @@ EXTRA_DIST = ChangeLog ChangeLog.0 ChangeLog.1 \
 	macros colors no.colors $(man_MANS) \
 	lflashlight-small.xpic lflashlight.eps lflashlight.pdf \
 	rflashlight-small.xpic rflashlight.eps rflashlight.pdf \
-	statist.jpg statist.eps statist.pdf \
-	wordlist wordlist2 wordlist3 \
+	statist.jpg statist.eps statist.pdf statist.txt \
+	wordlist wordlist2 wordlist3 wordlist4 wordlist5 wordlist6 \
 	bc_notes
 
 # Get rid of generated files when cleaning
-CLEANFILES = *.ps *.html *.dvi *~ awkcard.nc awkcard.tr gawk.pdf gawkinet.pdf gawkworkflow.pdf awkcard.pdf gawk.1.pdf
+CLEANFILES = *.ps *.html *.dvi *~ awkcard.nc awkcard.tr gawk.pdf gawkinet.pdf gawkworkflow.pdf awkcard.pdf gawk.1.pdf gawkbug.1.pdf pm-gawk.1.pdf pm-gawk.pdf
 
 MAKEINFO = @MAKEINFO@ --no-split --force
 
@@ -79,9 +80,9 @@ AWKCARD = awkcard.ps
 gawk.texi: $(srcdir)/gawktexi.in $(srcdir)/sidebar.awk
 	awk -f $(srcdir)/sidebar.awk < $(srcdir)/gawktexi.in > gawk.texi
 
-postscript: gawk.ps gawkinet.ps gawkworkflow.ps gawk.1.ps $(AWKCARD)
+postscript: gawk.ps gawkinet.ps gawkworkflow.ps pm-gawk.ps gawk.1.ps gawkbug.1.ps pm-gawk.1.ps $(AWKCARD)
 
-pdf-local: postscript gawk.pdf gawkinet.pdf awkcard.pdf gawk.1.pdf
+pdf-local: postscript gawk.pdf gawkinet.pdf awkcard.pdf gawk.1.pdf gawkbug.1.pdf pm-gawk.1.pdf pm-gawk.pdf
 
 gawk.ps: gawk.dvi
 	TEXINPUTS=$(srcdir): dvips -o gawk.ps gawk.dvi
@@ -92,11 +93,26 @@ gawkinet.ps: gawkinet.dvi
 gawkworkflow.ps: gawkworkflow.dvi
 	TEXINPUTS=$(srcdir): dvips -o gawkworkflow.ps gawkworkflow.dvi
 
+pm-gawk.ps: pm-gawk.dvi
+	TEXINPUTS=$(srcdir): dvips -o pm-gawk.ps pm-gawk.dvi
+
 gawk.1.ps: gawk.1
 	-groff -man $(srcdir)/gawk.1 > gawk.1.ps
 
 gawk.1.pdf: gawk.1.ps
 	ps2pdf gawk.1.ps gawk.1.pdf
+
+gawkbug.1.ps: gawkbug.1
+	-groff -man $(srcdir)/gawkbug.1 > gawkbug.1.ps
+
+gawkbug.1.pdf: gawkbug.1.ps
+	ps2pdf gawkbug.1.ps gawkbug.1.pdf
+
+pm-gawk.1.ps: pm-gawk.1
+	-groff -man $(srcdir)/pm-gawk.1 > pm-gawk.1.ps
+
+pm-gawk.1.pdf: pm-gawk.1.ps
+	ps2pdf pm-gawk.1.ps pm-gawk.1.pdf
 
 awkcard.tr: awkcard.in
 	sed 's:SRCDIR:$(srcdir):' < $(srcdir)/awkcard.in > awkcard.tr
@@ -110,7 +126,7 @@ awkcard.nc: $(CARDFILES)
 awkcard.pdf: awkcard.ps
 	ps2pdf awkcard.ps awkcard.pdf
 
-spell: spellmanual spellworkflow spellmanpage
+spell: spellmanual spellworkflow spellmanpage spellinet
 
 spellmanual:
 	@echo ==== gawktexi.in ====;
@@ -122,7 +138,24 @@ spellworkflow:
 	export LC_ALL=C ; spell "$(srcdir)"/gawkworkflow.texi | \
 	sort -u | comm -23 - "$(srcdir)"/wordlist2
 
-spellmanpage:
+spellmanpage: spellgawkmanpage spellgawkbugmanpage spellpmgawkmanpage
+
+spellgawkmanpage:
 	@echo ==== gawk.1 ====
 	export LC_ALL=C ; spell "$(srcdir)"/gawk.1 | \
 	sort -u | comm -23 - "$(srcdir)"/wordlist3
+
+spellgawkbugmanpage:
+	@echo ==== gawkbug.1 ====
+	export LC_ALL=C ; spell "$(srcdir)"/gawkbug.1 | \
+	sort -u | comm -23 - "$(srcdir)"/wordlist5
+
+spellpmgawkmanpage:
+	@echo ==== pm-gawk.1 ====
+	export LC_ALL=C ; spell "$(srcdir)"/pm-gawk.1 | \
+	sort -u | comm -23 - "$(srcdir)"/wordlist6
+
+spellinet:
+	@echo ==== gawkinet.texi ====
+	export LC_ALL=C ; spell "$(srcdir)"/gawkinet.texi | \
+	sort -u | comm -23 - "$(srcdir)"/wordlist4
