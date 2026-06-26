@@ -1,0 +1,183 @@
+From a16e950c7c06100b61fd02ea79c7e1f368bdbcce Mon Sep 17 00:00:00 2001
+From: "Arnold D. Robbins" <arnold@skeeve.com>
+Date: Tue, 31 Jan 2023 20:46:24 +0200
+Subject: Fix field assignment bug.
+
+---
+ interpret.h          | 16 +++++++++++++++-
+ pc/Makefile.tst      |  8 +++++++-
+ test/Makefile.am     |  6 +++++-
+ test/Makefile.in     | 11 ++++++++++-
+ test/Maketests       |  5 +++++
+ test/fieldassign.awk |  1 +
+ test/fieldassign.in  |  2 ++
+ test/fieldassign.ok  |  2 ++
+ 8 files changed, 47 insertions(+), 4 deletions(-)
+ create mode 100644 test/fieldassign.awk
+ create mode 100644 test/fieldassign.in
+ create mode 100644 test/fieldassign.ok
+
+diff --git a/interpret.h b/interpret.h
+index 4540d302..f33f3ea8 100644
+--- a/interpret.h
++++ b/interpret.h
+@@ -872,16 +872,30 @@ mod:
+ 			break;
+ 
+ 		case Op_assign:
++		{
++			NODE *save_lhs;
++
+ 			lhs = POP_ADDRESS();
+ 			r = TOP_SCALAR();
+-			unref(*lhs);
++			/*
++			 * 1/2023:
++			 * The old NODE pointed to by *lhs has to be freed.
++			 * But we can't free it too early, in case it's both $0 and $1
++			 * (Test case was gawk 'gsub(/./, "@") && $0=$1'). So we save
++			 * the old one, and after the assignment, we free it, since
++			 * $0 and $1 have the same stptr value but only $0 has MALLOC
++			 * in the flags. Whew!
++			 */
++			save_lhs = *lhs;
+ 			if (r->type == Node_elem_new) {
+ 				DEREF(r);
+ 				r = dupnode(Nnull_string);
+ 			}
+ 			UPREF(r);
+ 			UNFIELD(*lhs, r);
++			unref(save_lhs);
+ 			REPLACE(r);
++		}
+ 			break;
+ 
+ 		case Op_subscript_assign:
+diff --git a/pc/Makefile.tst b/pc/Makefile.tst
+index c83ffb62..d2f26e41 100644
+--- a/pc/Makefile.tst
++++ b/pc/Makefile.tst
+@@ -153,7 +153,8 @@ BASIC_TESTS = \
+ 	delarprm delfunc dfacheck2 dfamb1 dfastress divzero divzero2 \
+ 	dynlj eofsplit \
+ 	eofsrc1 escapebrace exit2 exitval1 exitval2 exitval3 fcall_exit \
+-	fcall_exit2 fldchg fldchgnf fldterm fnamedat fnarray fnarray2 \
++	fcall_exit2 \
++	fieldassign fldchg fldchgnf fldterm fnamedat fnarray fnarray2 \
+ 	fnaryscl fnasgnm fnmisc fordel forref forsimp fsbs fscaret fsnul1 \
+ 	fsrs fsspcoln fstabplus funsemnl funsmnam funstack getline \
+ 	getline2 getline3 getline4 getline5 getlnbuf getlnfa getnr2tb \
+@@ -1628,6 +1629,11 @@ fcall_exit2:
+ 	@-AWKPATH="$(srcdir)" $(AWK) -f $@.awk  < "$(srcdir)"/$@.in >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@
+ 	@-$(CMP) "$(srcdir)"/$@.ok _$@ && rm -f _$@
+ 
++fieldassign:
++	@echo $@
++	@-AWKPATH="$(srcdir)" $(AWK) -f $@.awk  < "$(srcdir)"/$@.in >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@
++	@-$(CMP) "$(srcdir)"/$@.ok _$@ && rm -f _$@
++
+ fldchg:
+ 	@echo $@
+ 	@-AWKPATH="$(srcdir)" $(AWK) -f $@.awk  < "$(srcdir)"/$@.in >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@
+diff --git a/test/Makefile.am b/test/Makefile.am
+index 9c8b062e..445f9c3f 100644
+--- a/test/Makefile.am
++++ b/test/Makefile.am
+@@ -316,6 +316,9 @@ EXTRA_DIST = \
+ 	fcall_exit2.ok \
+ 	fflush.ok \
+ 	fflush.sh \
++	fieldassign.awk \
++	fieldassign.in \
++	fieldassign.ok \
+ 	fieldwdth.awk \
+ 	fieldwdth.in \
+ 	fieldwdth.ok \
+@@ -1457,7 +1460,8 @@ BASIC_TESTS = \
+ 	delarprm delfunc dfacheck2 dfamb1 dfastress divzero divzero2 \
+ 	dynlj eofsplit \
+ 	eofsrc1 escapebrace exit2 exitval1 exitval2 exitval3 fcall_exit \
+-	fcall_exit2 fldchg fldchgnf fldterm fnamedat fnarray fnarray2 \
++	fcall_exit2 \
++	fieldassign fldchg fldchgnf fldterm fnamedat fnarray fnarray2 \
+ 	fnaryscl fnasgnm fnmisc fordel forref forsimp fsbs fscaret fsnul1 \
+ 	fsrs fsspcoln fstabplus funsemnl funsmnam funstack getline \
+ 	getline2 getline3 getline4 getline5 getlnbuf getlnfa getnr2tb \
+diff --git a/test/Makefile.in b/test/Makefile.in
+index 3df8fab9..26d28b5f 100644
+--- a/test/Makefile.in
++++ b/test/Makefile.in
+@@ -584,6 +584,9 @@ EXTRA_DIST = \
+ 	fcall_exit2.ok \
+ 	fflush.ok \
+ 	fflush.sh \
++	fieldassign.awk \
++	fieldassign.in \
++	fieldassign.ok \
+ 	fieldwdth.awk \
+ 	fieldwdth.in \
+ 	fieldwdth.ok \
+@@ -1725,7 +1728,8 @@ BASIC_TESTS = \
+ 	delarprm delfunc dfacheck2 dfamb1 dfastress divzero divzero2 \
+ 	dynlj eofsplit \
+ 	eofsrc1 escapebrace exit2 exitval1 exitval2 exitval3 fcall_exit \
+-	fcall_exit2 fldchg fldchgnf fldterm fnamedat fnarray fnarray2 \
++	fcall_exit2 \
++	fieldassign fldchg fldchgnf fldterm fnamedat fnarray fnarray2 \
+ 	fnaryscl fnasgnm fnmisc fordel forref forsimp fsbs fscaret fsnul1 \
+ 	fsrs fsspcoln fstabplus funsemnl funsmnam funstack getline \
+ 	getline2 getline3 getline4 getline5 getlnbuf getlnfa getnr2tb \
+@@ -3388,6 +3392,11 @@ fcall_exit2:
+ 	@-AWKPATH="$(srcdir)" $(AWK) -f $@.awk  < "$(srcdir)"/$@.in >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@
+ 	@-$(CMP) "$(srcdir)"/$@.ok _$@ && rm -f _$@
+ 
++fieldassign:
++	@echo $@
++	@-AWKPATH="$(srcdir)" $(AWK) -f $@.awk  < "$(srcdir)"/$@.in >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@
++	@-$(CMP) "$(srcdir)"/$@.ok _$@ && rm -f _$@
++
+ fldchg:
+ 	@echo $@
+ 	@-AWKPATH="$(srcdir)" $(AWK) -f $@.awk  < "$(srcdir)"/$@.in >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@
+diff --git a/test/Maketests b/test/Maketests
+index f708f055..e6a66f0f 100644
+--- a/test/Maketests
++++ b/test/Maketests
+@@ -327,6 +327,11 @@ fcall_exit2:
+ 	@-AWKPATH="$(srcdir)" $(AWK) -f $@.awk  < "$(srcdir)"/$@.in >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@
+ 	@-$(CMP) "$(srcdir)"/$@.ok _$@ && rm -f _$@
+ 
++fieldassign:
++	@echo $@
++	@-AWKPATH="$(srcdir)" $(AWK) -f $@.awk  < "$(srcdir)"/$@.in >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@
++	@-$(CMP) "$(srcdir)"/$@.ok _$@ && rm -f _$@
++
+ fldchg:
+ 	@echo $@
+ 	@-AWKPATH="$(srcdir)" $(AWK) -f $@.awk  < "$(srcdir)"/$@.in >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@
+diff --git a/test/fieldassign.awk b/test/fieldassign.awk
+new file mode 100644
+index 00000000..631775b1
+--- /dev/null
++++ b/test/fieldassign.awk
+@@ -0,0 +1 @@
++gsub(/./, "@") && $0 = $1
+diff --git a/test/fieldassign.in b/test/fieldassign.in
+new file mode 100644
+index 00000000..5f5521fa
+--- /dev/null
++++ b/test/fieldassign.in
+@@ -0,0 +1,2 @@
++abc
++def
+diff --git a/test/fieldassign.ok b/test/fieldassign.ok
+new file mode 100644
+index 00000000..11e9cfd5
+--- /dev/null
++++ b/test/fieldassign.ok
+@@ -0,0 +1,2 @@
++@@@
++@@@
+-- 
+2.30.2
+

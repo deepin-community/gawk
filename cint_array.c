@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2013, 2016, 2017, 2019, 2020,
+ * Copyright (C) 1986, 1988, 1989, 1991-2013, 2016, 2017, 2019-2022,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -77,7 +77,7 @@ const array_funcs_t cint_array_func = {
 static NODE **argv_store(NODE *symbol, NODE *subs);
 
 /* special case for ARGV in sandbox mode */
-const array_funcs_t argv_array_func = {
+static const array_funcs_t argv_array_func = {
 	"argv",
 	cint_array_init,
 	is_uinteger,
@@ -527,8 +527,8 @@ cint_dump(NODE *symbol, NODE *ndump)
 	indent(indent_level);
 	fprintf(output_fp, "THRESHOLD: %ld\n", THRESHOLD);
 	indent(indent_level);
-	fprintf(output_fp, "table_size: %ld (total), %ld (cint), %ld (int + str)\n",
-				symbol->table_size, cint_size, xsize);
+	fprintf(output_fp, "table_size: %lu (total), %ld (cint), %ld (int + str)\n",
+				(unsigned long) symbol->table_size, cint_size, xsize);
 	indent(indent_level);
 	fprintf(output_fp, "array_capacity: %lu\n", (unsigned long) symbol->array_capacity);
 	indent(indent_level);
@@ -1068,7 +1068,7 @@ leaf_lookup(NODE *symbol, NODE *array, long k, long size, long base)
 	lhs = array->nodes + (k - base); /* leaf element */
 	if (*lhs == NULL) {
 		array->table_size++;	/* one more element in leaf array */
-		*lhs = dupnode(Nnull_string);
+		*lhs = new_array_element();
 	}
 	return lhs;
 }

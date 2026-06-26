@@ -16,11 +16,18 @@ BEGIN {
 	Locale["EN"] = "en_US.UTF-8"
 	Locale["FR"] = "fr_FR.UTF-8"
 	Locale["GR"] = "el_GR.iso88597"
-	Locale["JA"] = "ja_JP.UTF-8"
+	Locale["JP"] = "ja_JP.UTF-8"
 	Locale["RU"] = "ru_RU.UTF-8"
 }
 
 # process the file Makefile.am:
+
+/^EXTRA_DIST *=/,/[^\\]$/ {
+	gsub(/(^EXTRA_DIST *=|\\$)/,"")
+	for (i = 1; i <= NF; i++)
+		extra_dist[$i]
+	next
+}
 
 /^[[:upper:]_]*_TESTS *=/,/[^\\]$/ {
 	gsub(/(^[[:upper:]_]*_TESTS *=|\\$)/,"")
@@ -108,15 +115,6 @@ BEGIN {
 	next
 }
 
-/^CHECK_MPFR *=/,/[^\\]$/ {
-	gsub(/(^CHECK_MPFR *=|\\$)/,"")
-	for (i = 1; i <= NF; i++)
-	{
-		mpfr[$i]
-	}
-	next
-}
-
 # Tests needing a particular locale
 /^NEED_LOCALE_.* *=/,/[^\\]$/ {
 	if (/^NEED/)
@@ -139,7 +137,7 @@ BEGIN {
 	next
 }
 
-/^[[:alpha:]_][[:alnum:]_]*:/ {
+/^[[:alpha:]_][-[:alnum:]_]*:/ {
 	# remember all targets from Makefile.am
 	sub(/:.*/,"")
 	targets[$0]
@@ -243,28 +241,26 @@ function generate(x,	s, i, locale_string)
 		printf "\t@echo $@\n"
 
 	# default is the leading tab and @
-	locale_string = "\t@"
+	locale_string = "\t@-"
 	if (x in all_locale_tests) {
 		delete all_locale_tests[x]
 		for (i in locale_tests) {
 			if (x in locale_tests[i]) {
-				locale_string = sprintf("\t@[ -z \"$$GAWKLOCALE\" ] && GAWKLOCALE=%s; export GAWKLOCALE; \\\n\t", Locale[i])
+				locale_string = sprintf("\t@-[ -z \"$$GAWKLOCALE\" ] && GAWKLOCALE=%s; export GAWKLOCALE; \\\n\t", Locale[i])
 				delete locale_tests[i][x]
 				break
 			}
 		}
 	}
 
-	if (x in mpfr) {
-		delete mpfr[x]
-		printf "%s", locale_string
-		printf "AWKPATH=\"$(srcdir)\" $(AWK) $(AWKFLAGS) -f $@.awk %s >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@\n", s
-		printf "\t@-if test -z \"$$AWKFLAGS\" ; then $(CMP) \"$(srcdir)\"/$@.ok _$@ && rm -f _$@ ; else \\\n"
-		printf "\t$(CMP) \"$(srcdir)\"/$@-mpfr.ok _$@ && rm -f _$@ ; \\\n"
-		printf "\tfi\n\n"
+	printf "%s", locale_string
+	printf "AWKPATH=\"$(srcdir)\" $(AWK) -f $@.awk %s >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@\n", s
+
+	if ((x "-mpfr.ok") in extra_dist) {
+		printf "\t@-if echo \"$$GAWK_TEST_ARGS\" | egrep -q -e '-M|--bignum' > /dev/null ; \\\n"
+		printf "\tthen $(CMP) \"$(srcdir)\"/$@-mpfr.ok _$@ && rm -f _$@ ; \\\n"
+		printf "\telse $(CMP) \"$(srcdir)\"/$@.ok _$@ && rm -f _$@ ; fi\n\n"
 	} else {
-		printf "%s", locale_string
-		printf "AWKPATH=\"$(srcdir)\" $(AWK) -f $@.awk %s >_$@ 2>&1 || echo EXIT CODE: $$? >>_$@\n", s
 		printf "\t@-$(CMP) \"$(srcdir)\"/$@.ok _$@ && rm -f _$@\n\n"
 	}
 }
@@ -297,7 +293,6 @@ END {
 	for (x in nondec)
 		if (!(x in targets))
 			printf "WARNING: --non-decimal-data target `%s' is missing.\n", x > "/dev/stderr"
-
 	for (x in re_interval)
 		if (!(x in targets))
 			printf "WARNING: --re-interval target `%s' is missing.\n", x > "/dev/stderr"
@@ -305,6 +300,9 @@ END {
 		for (y in locale_tests[x])
 			if (!(y in targets))
 				printf("WARNING: Locale `%s' target `%s' is missing.\n", x, y) > "/dev/stderr"
+	if ("check_zos" in ENVIRON)
+		for (x in zos_fail)
+			printf "WARNING: check target `%s' for $(ZOS_FAIL).\n", x > "/dev/stderr"
 
 	for (x in files)
 		if (!(x in unused) && \

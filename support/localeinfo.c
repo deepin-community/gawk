@@ -1,10 +1,10 @@
 /* locale information
 
-   Copyright 2016-2019 Free Software Foundation, Inc.
+   Copyright 2016-2022 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 3, or (at your option)
+   the Free Software Foundation, either version 3, or (at your option)
    any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -30,10 +30,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wctype.h>
-
-#if defined(__DJGPP__)
-#include "mbsupport.h"
-#endif
 
 /* The sbclen implementation relies on this.  */
 verify (MB_LEN_MAX <= SCHAR_MAX);
@@ -81,7 +77,7 @@ using_simple_locale (bool multibyte)
      where the native order is the collating-sequence order but there
      are multi-character collating elements.  */
   for (int i = 0; i < UCHAR_MAX; i++)
-    if (strcoll (((char []) {i, 0}), ((char []) {i + 1, 0})) <= 0)
+    if (0 <= strcoll (((char []) {i, 0}), ((char []) {i + 1, 0})))
       return false;
 
   return true;
@@ -128,7 +124,7 @@ static short const lonesome_lower[] =
 /* Verify that the worst case fits.  This is 1 for towupper, 1 for
    towlower, and 1 for each entry in LONESOME_LOWER.  */
 verify (1 + 1 + sizeof lonesome_lower / sizeof *lonesome_lower
-        <= CASE_FOLDED_BUFSIZE);
+               <= CASE_FOLDED_BUFSIZE);
 
 /* Find the characters equal to C after case-folding, other than C
    itself, and store them into FOLDED.  Return the number of characters

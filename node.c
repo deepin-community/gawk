@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2001, 2003-2015, 2017, 2018, 2019,
+ * Copyright (C) 1986, 1988, 1989, 1991-2001, 2003-2015, 2017-2019, 2021, 2022,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -25,10 +25,7 @@
  */
 
 #include "awk.h"
-#include "math.h"
-#include "floatmagic.h"	/* definition of isnan */
 
-static int is_ieee_magic_val(const char *val);
 static NODE *r_make_number(double x);
 static AWKNUM get_ieee_magic_val(char *val);
 extern NODE **fmt_list;          /* declared in eval.c */
@@ -62,7 +59,15 @@ r_force_number(NODE *n)
 	char *cpend;
 	char save;
 	char *ptr;
-	extern double strtod();
+
+	if (n->type == Node_elem_new) {
+		n->type = Node_val;
+		n->flags &= ~STRING;
+		n->stptr[0] = '0';	// STRCUR is still set
+		n->stlen = 1;
+
+		return n;
+	}
 
 	if ((n->flags & NUMCUR) != 0)
 		return n;
@@ -101,9 +106,12 @@ r_force_number(NODE *n)
 	if (! do_posix) {
 		if (is_alpha((unsigned char) *cp))
 			goto badnum;
-		else if (cpend == cp+4 && is_ieee_magic_val(cp)) {
-			n->numbr = get_ieee_magic_val(cp);
-			goto goodnum;
+		else if (is_ieee_magic_val(cp)) {
+			if (cpend == cp + 4) {
+				n->numbr = get_ieee_magic_val(cp);
+				goto goodnum;
+			} else
+				goto badnum;
 		}
 		/* else
 			fall through */
@@ -165,6 +173,9 @@ badnum:
 	return n;
 
 goodnum:
+	if (isnan(n->numbr) && *cp == '-' && signbit(n->numbr) == 0)
+		n->numbr = -(n->numbr);
+
 	if ((n->flags & USER_INPUT) != 0) {
 		/* leave USER_INPUT enabled to indicate that this is a strnum */
 		n->flags &= ~STRING;
@@ -304,27 +315,23 @@ r_dupnode(NODE *n)
 	assert(n->type == Node_val);
 
 #ifdef GAWKDEBUG
+	/* Do the same as in awk.h:dupnode().  */
 	if ((n->flags & MALLOC) != 0) {
 		n->valref++;
 		return n;
 	}
 #endif
+	getnode(r);
+	*r = *n;
 
 #ifdef HAVE_MPFR
 	if ((n->flags & MPZN) != 0) {
-		r = mpg_integer();
+		mpz_init(r->mpg_i);
 		mpz_set(r->mpg_i, n->mpg_i);
-		r->flags = n->flags;
 	} else if ((n->flags & MPFN) != 0) {
-		r = mpg_float();
+		mpfr_init(r->mpg_numbr);
 		int tval = mpfr_set(r->mpg_numbr, n->mpg_numbr, ROUND_MODE);
 		IEEE_FMT(r->mpg_numbr, tval);
-		r->flags = n->flags;
-	} else {
-#endif
-		getnode(r);
-		*r = *n;
-#ifdef HAVE_MPFR
 	}
 #endif
 
@@ -342,6 +349,7 @@ r_dupnode(NODE *n)
 		emalloc(r->stptr, char *, n->stlen + 1, "r_dupnode");
 		memcpy(r->stptr, n->stptr, n->stlen);
 		r->stptr[n->stlen] = '\0';
+		r->stlen = n->stlen;
 		if ((n->flags & WSTRCUR) != 0) {
 			r->wstlen = n->wstlen;
 			emalloc(r->wstptr, wchar_t *, sizeof(wchar_t) * (n->wstlen + 1), "r_dupnode");
@@ -370,7 +378,7 @@ int
 cmp_awknums(const NODE *t1, const NODE *t2)
 {
 	/*
-	 * This routine is also used to sort numeric array indices or values.
+	 * This routine is used to sort numeric array indices or values.
 	 * For the purposes of sorting, NaN is considered greater than
 	 * any other value, and all NaN values are considered equivalent and equal.
 	 * This isn't in compliance with IEEE standard, but compliance w.r.t. NaN
@@ -389,7 +397,6 @@ cmp_awknums(const NODE *t1, const NODE *t2)
 		return -1;
 	return 1;
 }
-
 
 /* make_str_node --- make a string node */
 
@@ -482,6 +489,11 @@ make_typed_regex(const char *re, size_t len)
 
 	n2 = make_string(re, len);
 	n2->typed_re = n;
+#if HAVE_MPFR
+	if (do_mpfr)
+		mpg_zero(n2);
+	else
+#endif
 	n2->numbr = 0;
 	n2->flags |= NUMCUR|STRCUR|REGEX; 
 	n2->flags &= ~(STRING|NUMBER);
@@ -496,20 +508,14 @@ void
 r_unref(NODE *tmp)
 {
 #ifdef GAWKDEBUG
-	if (tmp == NULL)
+	/* Do the same as in awk.h:unref().  */
+	assert(tmp == NULL || tmp->valref > 0);
+	if (tmp == NULL || --tmp->valref > 0)
 		return;
-	if ((tmp->flags & MALLOC) != 0) {
-		if (tmp->valref > 1) {
-			tmp->valref--;
-			return;
-		}
-		if ((tmp->flags & STRCUR) != 0)
-			efree(tmp->stptr);
-	}
-#else
+#endif
+
 	if ((tmp->flags & (MALLOC|STRCUR)) == (MALLOC|STRCUR))
 		efree(tmp->stptr);
-#endif
 
 	mpfr_unset(tmp);
 
@@ -615,7 +621,7 @@ parse_escape(const char **string_ptr)
 		start = *string_ptr;
 		for (i = j = 0; j < 2; j++) {
 			/* do outside test to avoid multiple side effects */
-			c = *(*string_ptr)++;
+			c = (unsigned char) *(*string_ptr)++;
 			if (isxdigit(c)) {
 				i *= 16;
 				if (isdigit(c))
@@ -629,8 +635,8 @@ parse_escape(const char **string_ptr)
 				break;
 			}
 		}
-		if (do_lint && j > 2)
-			lintwarn(_("hex escape \\x%.*s of %d characters probably not interpreted the way you expect"), j, start, j);
+		if (do_lint && j == 2 && isxdigit((unsigned char)*(*string_ptr)))
+			lintwarn(_("hex escape \\x%.*s of %d characters probably not interpreted the way you expect"), 3, start, 3);
 		return i;
 	case '\\':
 	case '"':
@@ -781,7 +787,7 @@ str2wstr(NODE *n, size_t **ptr)
 			/* Warn the user something's wrong */
 			if (! warned) {
 				warned = true;
-				warning(_("Invalid multibyte data detected. There may be a mismatch between your data and your locale."));
+				warning(_("Invalid multibyte data detected. There may be a mismatch between your data and your locale"));
 			}
 
 			/*
@@ -963,7 +969,7 @@ out:	;
 
 /* is_ieee_magic_val --- return true for +inf, -inf, +nan, -nan */
 
-static int
+bool
 is_ieee_magic_val(const char *val)
 {
 	/*
@@ -1018,7 +1024,7 @@ void init_btowc_cache()
 {
 	int i;
 
-	for (i = 0; i < 255; i++) {
+	for (i = 0; i <= 255; i++) {
 		btowc_cache[i] = btowc(i);
 	}
 }
@@ -1028,10 +1034,6 @@ void init_btowc_cache()
 struct block_header nextfree[BLOCK_MAX] = {
 	{ NULL, sizeof(NODE), "node" },
 	{ NULL, sizeof(BUCKET), "bucket" },
-#ifdef HAVE_MPFR
-	{ NULL, sizeof(mpfr_t), "mpfr" },
-	{ NULL, sizeof(mpz_t), "mpz" },
-#endif
 };
 
 #ifdef MEMDEBUG
@@ -1088,3 +1090,24 @@ more_blocks(int id)
 }
 
 #endif
+
+/* make_bool_node --- make a boolean-valued node */
+
+extern NODE *
+make_bool_node(bool value)
+{
+	NODE *val;
+	const char *sval;
+	AWKNUM nval;
+
+	sval = (value ? "1" : "0");
+	nval = (value ? 1.0 : 0.0);
+
+	val = make_number(nval);
+	val->stptr = estrdup(sval, strlen(sval));
+	val->stlen = strlen(sval);
+	val->flags |= NUMCUR|STRCUR|BOOLVAL;
+	val->stfmt = STFMT_UNUSED;
+
+	return val;
+}

@@ -1,7 +1,7 @@
 #
 # Makefile.am --- automake input file for gawk
 #
-# Copyright (C) 2000-2020 the Free Software Foundation, Inc.
+# Copyright (C) 2000-2022 the Free Software Foundation, Inc.
 #
 # This file is part of GAWK, the GNU implementation of the
 # AWK Programming Language.
@@ -42,18 +42,12 @@ EXTRA_DIST = \
 	NEWS.1 \
 	POSIX.STD \
 	README_d \
-	config.guess \
-	config.rpath  \
-	config.sub \
-	depcomp \
 	m4 \
-	missing \
 	missing_d \
 	po/README \
 	pc \
 	posix \
-	vms \
-	ylwrap
+	vms
 
 # The order to do things in.
 #
@@ -76,10 +70,11 @@ SUBDIRS += extras doc awklib po test
 
 # what to make and install
 bin_PROGRAMS = gawk
+bin_SCRIPTS = gawkbug
 include_HEADERS = gawkapi.h
 BUILT_SOURCES = $(srcdir)/pc/Makefile.tst
 
-# sources for both gawk and dgawk
+# sources for gawk
 base_sources = \
 	array.c \
 	awk.h \
@@ -102,7 +97,6 @@ base_sources = \
 	int_array.c \
 	interpret.h \
 	io.c \
-	mbsupport.h \
 	main.c \
 	mpfr.c \
 	msg.c \
@@ -120,7 +114,8 @@ gawk_SOURCES = $(base_sources)
 
 # Get extra libs as needed, Automake will supply LIBINTL and SOCKET_LIBS.
 LDADD = support/libsupport.a \
-	$(LIBSIGSEGV) $(LIBINTL) $(SOCKET_LIBS) $(LIBREADLINE) $(LIBMPFR)
+	$(LIBSIGSEGV) $(LIBINTL) $(SOCKET_LIBS) $(LIBREADLINE) $(LIBMPFR) \
+	$(LDFLAGS)
 
 # Directory for gawk's data files. Automake supplies datadir.
 pkgdatadir = $(datadir)/awk
@@ -135,13 +130,19 @@ DEFLIBPATH="\"$(pkgextensiondir)\""
 DEFS= -DDEFPATH=$(DEFPATH) -DDEFLIBPATH=$(DEFLIBPATH) -DSHLIBEXT=$(SHLIBEXT) -DHAVE_CONFIG_H -DGAWK -DLOCALEDIR='"$(datadir)/locale"' -I"$(srcdir)/support"
 
 # Get rid of core files when cleaning
-CLEANFILES = core core.*
+CLEANFILES = core core.* $(bin_SCRIPTS)
 
 # We want hard links for install-exec-hook, below
 LN= ln
 
+# Make copies...
+CP= cp
+
 # For some make's, e.g. OpenBSD, that don't define this
 RM = rm -f
+
+# For debugging
+DEBUG = -gdwarf-4 -g3
 
 # First, add a link from gawk to gawk-X.Y.Z.
 #
