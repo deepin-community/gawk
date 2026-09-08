@@ -1,3 +1,306 @@
+2025-04-02         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* config.h: Regenerated.
+	* 5.3.2: Release tar made.
+
+2025-03-27         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2025-03-18         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* config.h: Regenerated.
+
+2025-03-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2025-03-11         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2025-02-24         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst.prologue: Update copyright years.
+	* Makefile.tst: Regenerated.
+
+2025-02-18         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2025-02-05         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2025-01-23         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2025-01-22         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2025-01-07         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2025-01-06         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-10-25         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-09-19         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst, config.h: Regenerated.
+
+2024-09-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.3.1: Release tar made.
+
+2024-09-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* gawkmisc.pc, testoutcmp.awk: Update copyright year.
+	* Makefile.tst, config.h: Regenerated.
+
+2024-09-16         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-08-30         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-08-29         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* config.h: Regenerated.
+
+2024-08-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* GenMakefileTst.awk: Adjust code so that multiple lines can
+	have $(CMP) and get changed to $(TESTOUTCMP).
+
+2024-08-12         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated after adding new test.
+
+2024-08-11  Eli Zaretskii  <eliz@gnu.org>
+
+	* Makefile.tst (NEED_TESTOUTCMP, printf-corners): Use
+	testoutcmp.awk.
+
+	* testoutcmp.awk: Add fixes for NAN and INF; fix exponents.
+
+	* Makefile (AWKOBJS4): Add new file printf$O.
+
+2024-08-09         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+	* config.h: Regenerated.
+
+2024-08-08         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-07-11         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-06-13         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-06-08         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-04-20         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-02-29         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2024-02-23         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* make-config.sh: New file.
+	* config.h: Updated.
+
+2024-01-28         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-12-24         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-12-21         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-12-12  Eli Zaretskii  <eliz@gnu.org>
+
+	* gawkmisc.pc (optimal_bufsize): Return DEFBLKSIZE for directories
+	"opened" by the readdir extension.
+
+2023-12-02         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-11-28         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-11-16         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-11-02         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.3.0: Release tar ball made.
+
+2023-11-02         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* config.h: Regenerated.
+
+2023-10-24         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* config.h: Regenerated.
+
+2023-10-23         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-10-22         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* gawkmisc.pc: Update copyright year.
+
+2023-10-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst.prologue: Update copyright years. Duh.
+
+2023-10-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Update copyright years.
+
+2023-10-15         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* config.h: Regenerated.
+
+2023-10-13         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-10-12  Eli Zaretskii  <eliz@gnu.org>
+
+	* gawkmisc.pc (w32_wc_to_lc): New function.
+
+2023-10-08         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-10-07  Eli Zaretskii  <eliz@gnu.org>
+
+	* Makefile (ALL_EXTENSIONS, readdir_test.$(SOEXT)): Remove
+	readdir_test, to follow the upstream.
+
+2023-10-04         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* config.h: Updated.
+
+2023-10-03         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-09-13         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-09-01         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-08-20         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-07-09         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-06-12         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-06-04         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-05-28         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-05-25         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-05-07         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.2.2: Release tar ball made.
+
+2023-04-20         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* config.h: Regenerated.
+
+2023-04-14         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.ext: Update copyright year.
+
+2023-04-13         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+	* config.h: Regenerated.
+	* Makefile.tst: Regenerated.
+
+2023-03-24         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-03-21         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-03-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-03-16         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-03-12  Eli Zaretskii  <eliz@gnu.org>
+
+	* Makefile.ext (readdir_test.$(SOEXT)): Fix typo.
+
+2023-03-09         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-02-24         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2023-01-31         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2022-11-25         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
 2022-11-17         Arnold D. Robbins     <arnold@skeeve.com>
 
 	* 5.2.1: Release tar ball made.
@@ -47,6 +350,10 @@
 	* config.h: Regenerated.
 
 2022-09-04         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.tst: Regenerated.
+
+2022-08-29         Arnold D. Robbins     <arnold@skeeve.com>
 
 	* Makefile.tst: Regenerated.
 

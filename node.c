@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2001, 2003-2015, 2017-2019, 2021, 2022,
+ * Copyright (C) 1986, 1988, 1989, 1991-2001, 2003-2015, 2017-2019, 2021-2025,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -61,10 +61,8 @@ r_force_number(NODE *n)
 	char *ptr;
 
 	if (n->type == Node_elem_new) {
+		elem_new_reset(n);
 		n->type = Node_val;
-		n->flags &= ~STRING;
-		n->stptr[0] = '0';	// STRCUR is still set
-		n->stlen = 1;
 
 		return n;
 	}
@@ -249,16 +247,16 @@ r_format_val(const char *format, int index, NODE *s)
 		NODE *dummy[2], *r;
 		unsigned int oflags;
 
-		/* create dummy node for a sole use of format_tree */
+		/* create dummy node for a sole use of format_args */
 		dummy[1] = s;
 		oflags = s->flags;
 
 		if (val == s->numbr) {
 			/* integral value, but outside range of %ld, use %.0f */
-			r = format_tree("%.0f", 4, dummy, 2);
+			r = format_args("%.0f", 4, dummy, 2);
 			s->stfmt = STFMT_UNUSED;
 		} else {
-			r = format_tree(format, fmt_list[index]->stlen, dummy, 2);
+			r = format_args(format, fmt_list[index]->stlen, dummy, 2);
 			assert(r != NULL);
 			s->stfmt = index;
 		}
@@ -297,7 +295,7 @@ r_format_val(const char *format, int index, NODE *s)
 	}
 	if ((s->flags & (MALLOC|STRCUR)) == (MALLOC|STRCUR))
 		efree(s->stptr);
-	emalloc(s->stptr, char *, s->stlen + 1, "format_val");
+	emalloc(s->stptr, char *, s->stlen + 1);
 	memcpy(s->stptr, sp, s->stlen + 1);
 no_malloc:
 	s->flags |= STRCUR;
@@ -346,13 +344,13 @@ r_dupnode(NODE *n)
 	r->wstlen = 0;
 
 	if ((n->flags & STRCUR) != 0) {
-		emalloc(r->stptr, char *, n->stlen + 1, "r_dupnode");
+		emalloc(r->stptr, char *, n->stlen + 1);
 		memcpy(r->stptr, n->stptr, n->stlen);
 		r->stptr[n->stlen] = '\0';
 		r->stlen = n->stlen;
 		if ((n->flags & WSTRCUR) != 0) {
 			r->wstlen = n->wstlen;
-			emalloc(r->wstptr, wchar_t *, sizeof(wchar_t) * (n->wstlen + 1), "r_dupnode");
+			emalloc(r->wstptr, wchar_t *, sizeof(wchar_t) * (n->wstlen + 1));
 			memcpy(r->wstptr, n->wstptr, n->wstlen * sizeof(wchar_t));
 			r->wstptr[n->wstlen] = L'\0';
 			r->flags |= WSTRCUR;
@@ -405,6 +403,7 @@ make_str_node(const char *s, size_t len, int flags)
 {
 	NODE *r;
 	getnode(r);
+	memset(r, '\0', sizeof(NODE));
 	r->type = Node_val;
 	r->numbr = 0;
 	r->flags = (MALLOC|STRING|STRCUR);
@@ -419,7 +418,7 @@ make_str_node(const char *s, size_t len, int flags)
 	if ((flags & ALREADY_MALLOCED) != 0)
 		r->stptr = (char *) s;
 	else {
-		emalloc(r->stptr, char *, len + 1, "make_str_node");
+		emalloc(r->stptr, char *, len + 1);
 		memcpy(r->stptr, s, len);
 	}
 	r->stptr[len] = '\0';
@@ -441,10 +440,15 @@ make_str_node(const char *s, size_t len, int flags)
 			 * character happens to be a backslash.
 			 */
 			if (gawk_mb_cur_max > 1) {
-				int mblen = mbrlen(pf, end-pf, &cur_state);
+				size_t mblen = mbrlen(pf, end-pf, &cur_state);
 
-				if (mblen > 1) {
-					int i;
+				/*
+				 * Incomplete (-2), invalid (-1), and
+				 * null (0) characters are excluded here.
+				 * They are read as a sequence of bytes.
+				 */
+				if (mblen > 1 && mblen < (size_t) -2) {
+					size_t i;
 
 					for (i = 0; i < mblen; i++)
 						*ptm++ = *pf++;
@@ -454,20 +458,39 @@ make_str_node(const char *s, size_t len, int flags)
 
 			c = *pf++;
 			if (c == '\\') {
-				c = parse_escape(&pf);
-				if (c < 0) {
+				const char *result;
+				size_t nbytes;
+				enum escape_results ret;
+
+				ret = parse_escape(& pf, & result, & nbytes);
+				switch (ret) {
+				case ESCAPE_OK:
+					assert(nbytes > 0);
+					while (nbytes--)
+						*ptm++ = *result++;
+					break;
+				case ESCAPE_CONV_ERR:
+					*ptm++ = '?';
+					break;
+				case ESCAPE_TERM_BACKSLASH:
+					if (do_lint)
+						lintwarn(_("backslash at end of string"));
+					*ptm++ = '\\';
+					break;
+				case ESCAPE_LINE_CONTINUATION:
 					if (do_lint)
 						lintwarn(_("backslash string continuation is not portable"));
-					if ((flags & ELIDE_BACK_NL) != 0)
-						continue;
-					c = '\\';
+					continue;
+				default:
+					cant_happen("received bad result %d from parse_escape(), nbytes = %zu",
+							(int) ret, nbytes);
+					break;
 				}
-				*ptm++ = c;
 			} else
 				*ptm++ = c;
 		}
 		len = ptm - r->stptr;
-		erealloc(r->stptr, char *, len + 1, "make_str_node");
+		erealloc(r->stptr, char *, len + 1);
 		r->stptr[len] = '\0';
 	}
 	r->stlen = len;
@@ -495,7 +518,7 @@ make_typed_regex(const char *re, size_t len)
 	else
 #endif
 	n2->numbr = 0;
-	n2->flags |= NUMCUR|STRCUR|REGEX; 
+	n2->flags |= NUMCUR|STRCUR|REGEX;
 	n2->flags &= ~(STRING|NUMBER);
 
 	return n2;
@@ -517,7 +540,21 @@ r_unref(NODE *tmp)
 	if ((tmp->flags & (MALLOC|STRCUR)) == (MALLOC|STRCUR))
 		efree(tmp->stptr);
 
+	if ((tmp->flags & REGEX) != 0) {
+		refree(tmp->typed_re->re_reg[0]);
+		if (tmp->typed_re->re_reg[1] != NULL)
+			refree(tmp->typed_re->re_reg[1]);
+		unref(tmp->typed_re->re_exp);
+		freenode(tmp->typed_re);
+	}
+
 	mpfr_unset(tmp);
+
+	if (tmp->type == Node_elem_new && tmp->elemnew_vname != NULL)
+		efree(tmp->elemnew_vname);
+	else if ((tmp->type == Node_var || tmp->type == Node_var_new)
+			&& tmp->vname != NULL)
+		efree(tmp->vname);
 
 	free_wstr(tmp);
 	freenode(tmp);
@@ -527,31 +564,32 @@ r_unref(NODE *tmp)
 /*
  * parse_escape:
  *
- * Parse a C escape sequence.  STRING_PTR points to a variable containing a
- * pointer to the string to parse.  That pointer is updated past the
- * characters we use.  The value of the escape sequence is returned.
+ * Parse a C escape sequence.  string_ptr points to a variable containing
+ * a pointer to the string to parse.  result points to a pointer which will
+ * be set to the address of the internal buffer holding the bytes of the
+ * translated escape sequence.
  *
- * A negative value means the sequence \ newline was seen, which is supposed to
- * be equivalent to nothing at all.
+ * Return values:
+ *	ESCAPE_OK,		// nbytes == 1 to MB_CUR_MAX: the length of the translated escape sequence
+ *	ESCAPE_CONV_ERR,	// wcrtomb conversion error
+ *	ESCAPE_TERM_BACKSLASH,	// terminal backslash (to be preserved in cmdline strings)
+ *	ESCAPE_LINE_CONTINUATION	// line continuation  (backslash-newline pair)
  *
- * If \ is followed by a null character, we return a negative value and leave
- * the string pointer pointing at the null character.
- *
- * If \ is followed by 000, we return 0 and leave the string pointer after the
- * zeros.  A value of 0 does not mean end of string.
- *
- * POSIX doesn't allow \x.
+ * POSIX doesn't allow \x or \u.
  */
 
-int
-parse_escape(const char **string_ptr)
+enum escape_results
+parse_escape(const char **string_ptr, const char **result, size_t *nbytes)
 {
+	static char buf[MB_LEN_MAX];
+	enum escape_results retval = ESCAPE_OK;
 	int c = *(*string_ptr)++;
 	int i;
 	int count;
 	int j;
 	const char *start;
 
+	*nbytes = 1;
 	if (do_lint_old) {
 		switch (c) {
 		case 'a':
@@ -565,24 +603,33 @@ parse_escape(const char **string_ptr)
 
 	switch (c) {
 	case 'a':
-		return '\a';
+		buf[0] = '\a';
+		break;
 	case 'b':
-		return '\b';
+		buf[0] = '\b';
+		break;
 	case 'f':
-		return '\f';
+		buf[0] = '\f';
+		break;
 	case 'n':
-		return '\n';
+		buf[0] = '\n';
+		break;
 	case 'r':
-		return '\r';
+		buf[0] = '\r';
+		break;
 	case 't':
-		return '\t';
+		buf[0] = '\t';
+		break;
 	case 'v':
-		return '\v';
+		buf[0] = '\v';
+		break;
 	case '\n':
-		return -2;
+		retval = ESCAPE_LINE_CONTINUATION;
+		break;
 	case 0:
 		(*string_ptr)--;
-		return -1;
+		retval = ESCAPE_TERM_BACKSLASH;
+		break;
 	case '0':
 	case '1':
 	case '2':
@@ -602,7 +649,8 @@ parse_escape(const char **string_ptr)
 				break;
 			}
 		}
-		return i;
+		buf[0] = i;
+		break;
 	case 'x':
 		if (do_lint) {
 			static bool warned = false;
@@ -612,11 +660,14 @@ parse_escape(const char **string_ptr)
 				lintwarn(_("POSIX does not allow `\\x' escapes"));
 			}
 		}
-		if (do_posix)
-			return ('x');
+		if (do_posix) {
+			buf[0] = 'x';
+			break;
+		}
 		if (! isxdigit((unsigned char) (*string_ptr)[0])) {
 			warning(_("no hex digits in `\\x' escape sequence"));
-			return ('x');
+			buf[0] = 'x';
+			break;
 		}
 		start = *string_ptr;
 		for (i = j = 0; j < 2; j++) {
@@ -637,10 +688,71 @@ parse_escape(const char **string_ptr)
 		}
 		if (do_lint && j == 2 && isxdigit((unsigned char)*(*string_ptr)))
 			lintwarn(_("hex escape \\x%.*s of %d characters probably not interpreted the way you expect"), 3, start, 3);
-		return i;
+		buf[0] = i;
+		break;
+	case 'u':
+	{
+		size_t n;
+#ifndef __MINGW32__
+		mbstate_t mbs;
+#endif
+
+		if (do_lint) {
+			static bool warned = false;
+
+			if (! warned) {
+				warned = true;
+				lintwarn(_("POSIX does not allow `\\u' escapes"));
+			}
+		}
+		if (do_posix) {
+			buf[0] = 'u';
+			break;
+		}
+		if (! isxdigit((unsigned char) (*string_ptr)[0])) {
+			warning(_("no hex digits in `\\u' escape sequence"));
+			buf[0] = 'u';
+			break;
+		}
+		start = *string_ptr;
+		for (i = j = 0; j < 8; j++) {
+			/* do outside test to avoid multiple side effects */
+			c = (unsigned char) *(*string_ptr)++;
+			if (isxdigit(c)) {
+				i *= 16;
+				if (isdigit(c))
+					i += c - '0';
+				else if (isupper(c))
+					i += c - 'A' + 10;
+				else
+					i += c - 'a' + 10;
+			} else {
+				(*string_ptr)--;
+				break;
+			}
+		}
+#ifdef __MINGW32__
+		n = w32_wc_to_lc (i, buf);
+#elif defined (__CYGWIN__)
+		memset(& mbs, 0, sizeof(mbs));
+		n = wcitomb(buf, i, & mbs);
+#else
+		memset(& mbs, 0, sizeof(mbs));
+		n = wcrtomb(buf, i, & mbs);
+#endif	/* !__MINGW32__ */
+		if (n == (size_t) -1) {
+			warning(_("invalid `\\u' escape sequence"));
+			retval = ESCAPE_CONV_ERR;
+			*nbytes = 0;
+		} else {
+			*nbytes = n;
+		}
+		break;
+	}
 	case '\\':
 	case '"':
-		return c;
+		buf[0] = c;
+		break;
 	default:
 	{
 		static bool warned[256];
@@ -654,8 +766,12 @@ parse_escape(const char **string_ptr)
 			warning(_("escape sequence `\\%c' treated as plain `%c'"), uc, uc);
 		}
 	}
-		return c;
+		buf[0] = c;
+		break;
 	}
+
+	*result = buf;
+	return retval;
 }
 
 /* get_numbase --- return the base to use for the number in 's' */
@@ -716,6 +832,20 @@ str2wstr(NODE *n, size_t **ptr)
 	assert((n->flags & (STRING|STRCUR)) != 0);
 
 	/*
+	 * For use by do_match, create and fill in an array.
+	 * For each byte `i' in n->stptr (the original string),
+	 * a[i] is equal to `j', where `j' is the corresponding wchar_t
+	 * in the converted wide string.
+	 *
+	 * This is needed even for Nnull_string or Null_field.
+	 *
+	 * Create the array.
+	 */
+	if (ptr != NULL) {
+		ezalloc(*ptr, size_t *, sizeof(size_t) * (n->stlen + 1));
+	}
+
+	/*
 	 * Don't convert global null string or global null field
 	 * variables to a wide string. They are both zero-length anyway.
 	 * This also avoids future double-free errors while releasing
@@ -745,20 +875,8 @@ str2wstr(NODE *n, size_t **ptr)
 	 * realloc the wide string down in size.
 	 */
 
-	emalloc(n->wstptr, wchar_t *, sizeof(wchar_t) * (n->stlen + 1), "str2wstr");
+	emalloc(n->wstptr, wchar_t *, sizeof(wchar_t) * (n->stlen + 1));
 	wsp = n->wstptr;
-
-	/*
-	 * For use by do_match, create and fill in an array.
-	 * For each byte `i' in n->stptr (the original string),
-	 * a[i] is equal to `j', where `j' is the corresponding wchar_t
-	 * in the converted wide string.
-	 *
-	 * Create the array.
-	 */
-	if (ptr != NULL) {
-		ezalloc(*ptr, size_t *, sizeof(size_t) * n->stlen, "str2wstr");
-	}
 
 	sp = n->stptr;
 	src_count = n->stlen;
@@ -829,12 +947,17 @@ str2wstr(NODE *n, size_t **ptr)
 		}
 	}
 
+	/* Needed for zero-length matches at the end of a string */
+	assert(sp - n->stptr == n->stlen);
+	if (ptr != NULL)
+		(*ptr)[sp - n->stptr] = i;
+
 	*wsp = L'\0';
 	n->wstlen = wsp - n->wstptr;
 	n->flags |= WSTRCUR;
 #define ARBITRARY_AMOUNT_TO_GIVE_BACK 100
 	if (n->stlen - n->wstlen > ARBITRARY_AMOUNT_TO_GIVE_BACK)
-		erealloc(n->wstptr, wchar_t *, sizeof(wchar_t) * (n->wstlen + 1), "str2wstr");
+		erealloc(n->wstptr, wchar_t *, sizeof(wchar_t) * (n->wstlen + 1));
 
 	return n;
 }
@@ -861,7 +984,7 @@ wstr2str(NODE *n)
 	memset(& mbs, 0, sizeof(mbs));
 
 	length = n->wstlen;
-	emalloc(newval, char *, (length * gawk_mb_cur_max) + 1, "wstr2str");
+	emalloc(newval, char *, (length * gawk_mb_cur_max) + 1);
 
 	wp = n->wstptr;
 	for (cp = newval; length > 0; length--) {
@@ -1042,7 +1165,7 @@ void *
 r_getblock(int id)
 {
 	void *res;
-	emalloc(res, void *, nextfree[id].size, "getblock");
+	emalloc(res, void *, nextfree[id].size);
 	nextfree[id].active++;
 	if (nextfree[id].highwater < nextfree[id].active)
 		nextfree[id].highwater = nextfree[id].active;
@@ -1072,7 +1195,7 @@ more_blocks(int id)
 	size = nextfree[id].size;
 
 	assert(size >= sizeof(struct block_item));
-	emalloc(freep, struct block_item *, BLOCKCHUNK * size, "more_blocks");
+	emalloc(freep, struct block_item *, BLOCKCHUNK * size);
 	p = (char *) freep;
 	endp = p + BLOCKCHUNK * size;
 

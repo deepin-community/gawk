@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2022,
+ * Copyright (C) 1986, 1988, 1989, 1991-2025,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -25,23 +25,13 @@
  */
 
 /* FIX THIS BEFORE EVERY RELEASE: */
-#define UPDATE_YEAR	2022
+#define UPDATE_YEAR	2025
 
 #include "awk.h"
 #include "getopt.h"
 
 #ifdef HAVE_MCHECK_H
 #include <mcheck.h>
-#endif
-
-#ifdef HAVE_LIBSIGSEGV
-#include <sigsegv.h>
-#else
-typedef void *stackoverflow_context_t;
-/* the argument to this macro is purposely not used */
-#define sigsegv_install_handler(catchsegv) signal(SIGSEGV, catchsig)
-/* define as 0 rather than empty so that (void) cast on it works */
-#define stackoverflow_install_handler(catchstackoverflow, extra_stack, STACK_SIZE) 0
 #endif
 
 #define DEFAULT_PROFILE		"awkprof.out"	/* where to put profile */
@@ -60,16 +50,12 @@ static void init_vars(void);
 static NODE *load_environ(void);
 static NODE *load_procinfo(void);
 static void catchsig(int sig);
-#ifdef HAVE_LIBSIGSEGV
-static int catchsegv(void *fault_address, int serious);
-static void catchstackoverflow(int emergency, stackoverflow_context_t scp);
-#endif
-static void nostalgia(void) ATTRIBUTE_NORETURN;
 static void version(void) ATTRIBUTE_NORETURN;
 static void init_fds(void);
 static void init_groupset(void);
 static void save_argv(int, char **);
 static const char *platform_name();
+static void check_pma_security(const char *pma_file);
 
 /* These nodes store all the special variables AWK uses */
 NODE *ARGC_node, *ARGIND_node, *ARGV_node, *BINMODE_node, *CONVFMT_node;
@@ -150,11 +136,14 @@ bool using_persistent_malloc = false;
 enum do_flag_values do_flags = DO_FLAG_NONE;
 bool do_itrace = false;			/* provide simple instruction trace */
 bool do_optimize = true;		/* apply default optimizations */
-static int do_nostalgia = false;	/* provide a blast from the past */
 static int do_binary = false;		/* hands off my data! */
 static int do_version = false;		/* print version info */
 static const char *locale = "";		/* default value to setlocale */
 static const char *locale_dir = LOCALEDIR;	/* default locale dir */
+#ifdef USE_PERSISTENT_MALLOC
+const char *get_pma_version(void);
+#endif
+static bool enable_pma(char **argv);
 
 int use_lc_numeric = false;	/* obey locale for decimal point */
 
@@ -181,6 +170,7 @@ static const struct option optab[] = {
 	{ "bignum",		no_argument,		NULL,	'M' },
 	{ "characters-as-bytes", no_argument,		& do_binary,	 'b' },
 	{ "copyright",		no_argument,		NULL,	'C' },
+	{ "csv",		no_argument,		NULL,	'k' },
 	{ "debug",		optional_argument,	NULL,	'D' },
 	{ "dump-variables",	optional_argument,	NULL,	'd' },
 	{ "exec",		required_argument,	NULL,	'E' },
@@ -197,7 +187,6 @@ static const struct option optab[] = {
 #endif
 	{ "non-decimal-data",	no_argument,		NULL,	'n' },
 	{ "no-optimize",	no_argument,		NULL,	's' },
-	{ "nostalgia",		no_argument,		& do_nostalgia,	1 },
 	{ "optimize",		no_argument,		NULL,	'O' },
 #if defined(YYDEBUG) || defined(GAWKDEBUG)
 	{ "parsedebug",		no_argument,		NULL,	'Y' },
@@ -222,31 +211,16 @@ int
 main(int argc, char **argv)
 {
 	int i;
-	char *extra_stack;
 	bool have_srcfile = false;
 	SRCFILE *s;
 	char *cp;
-	const char *persist_file = getenv("GAWK_PERSIST_FILE");	/* backing file for PMA */
 #if defined(LOCALEDEBUG)
 	const char *initial_locale;
 #endif
 
 	myname = gawk_name(argv[0]);
 
-	int pma_result = pma_init(1, persist_file);
-	if (pma_result != 0) {
-		// don't use 'fatal' routine, it seems to need to
-		// allocate memory
-		fprintf(stderr, _("%s: fatal: persistent memory allocator failed to initialize: return value %d, pma.c line: %d.\n"),
-				myname, pma_result, pma_errno);
-		exit(EXIT_FATAL);
-	}
-
-	using_persistent_malloc = (persist_file != NULL);
-#ifndef USE_PERSISTENT_MALLOC
-	if (using_persistent_malloc)
-		warning(_("persistent memory is not supported"));
-#endif
+	using_persistent_malloc = enable_pma(argv);
 #ifdef HAVE_MPFR
 	mp_set_memory_functions(mpfr_mem_alloc, mpfr_mem_realloc, mpfr_mem_free);
 #endif
@@ -261,6 +235,7 @@ main(int argc, char **argv)
 		mtrace();
 #endif /* HAVE_MTRACE */
 #endif /* HAVE_MCHECK_H */
+
 	os_arg_fixup(&argc, &argv); /* emulate redirection, expand wildcards */
 
 	if (argc < 2)
@@ -269,22 +244,12 @@ main(int argc, char **argv)
 	if ((cp = getenv("GAWK_LOCALE_DIR")) != NULL)
 		locale_dir = cp;
 
-#if defined(F_GETFL) && defined(O_APPEND)
-	// 1/2018: This is needed on modern BSD systems so that the
-	// inplace tests pass. I think it's a bug in those kernels
-	// but let's just work around it anyway.
-	int flags = fcntl(fileno(stderr), F_GETFL, NULL);
-	if (flags >= 0 && (flags & O_APPEND) == 0) {
-		flags |= O_APPEND;
-		(void) fcntl(fileno(stderr), F_SETFL, flags);
-	}
-#endif
-
 #if defined(LOCALEDEBUG)
 	initial_locale = locale;
 #endif
 	set_locale_stuff();
 
+	(void) signal(SIGSEGV, catchsig);
 	(void) signal(SIGFPE, catchsig);
 #ifdef SIGBUS
 	(void) signal(SIGBUS, catchsig);
@@ -304,12 +269,6 @@ main(int argc, char **argv)
 	 * it did not do so in the past and people would complain.
 	 */
 	ignore_sigpipe();
-
-	(void) sigsegv_install_handler(catchsegv);
-#define STACK_SIZE (16*1024)
-	emalloc(extra_stack, char *, STACK_SIZE, "main");
-	(void) stackoverflow_install_handler(catchstackoverflow, extra_stack, STACK_SIZE);
-#undef STACK_SIZE
 
 	/* initialize the null string */
 	Nnull_string = make_string("", 0);
@@ -349,9 +308,6 @@ main(int argc, char **argv)
 	if (gawk_mb_cur_max == 1)
 		load_casetable();
 
-	if (do_nostalgia)
-		nostalgia();
-
 	/* check for POSIXLY_CORRECT environment variable */
 	if (! do_posix && getenv("POSIXLY_CORRECT") != NULL) {
 		do_flags |= DO_POSIX;
@@ -388,6 +344,9 @@ main(int argc, char **argv)
 #endif
 		}
 	}
+
+	if (do_csv && do_posix)
+		fatal(_("`--posix' and `--csv' conflict"));
 
 	if (do_lint) {
 		if (os_is_setuid())
@@ -429,6 +388,10 @@ main(int argc, char **argv)
 	/* Set up the special variables */
 	init_vars();
 
+	/* set up CSV */
+	init_csv_records();
+	init_csv_fields();
+
 	/* Set up the field variables */
 	init_fields();
 
@@ -460,6 +423,9 @@ main(int argc, char **argv)
 #endif
 	if (os_isatty(fileno(stdout)))
 		output_is_tty = true;
+
+	/* arrange to save free lists if using PMA */
+	atexit(pma_save_free_lists);
 
 	/* initialize API before loading extension libraries */
 	init_ext_api();
@@ -555,6 +521,7 @@ main(int argc, char **argv)
 		set_current_namespace(awk_namespace);
 		dump_prog(code_block);
 		dump_funcs();
+		close_prof_file();
 	}
 
 	if (do_dump_vars)
@@ -567,10 +534,6 @@ main(int argc, char **argv)
 
 	if (do_tidy_mem)
 		release_all_vars();
-
-	/* keep valgrind happier */
-	if (extra_stack)
-		efree(extra_stack);
 
 	final_exit(exit_val);
 	return exit_val;	/* to suppress warnings */
@@ -588,13 +551,11 @@ add_preassign(enum assign_type type, char *val)
 	++numassigns;
 
 	if (preassigns == NULL) {
-		emalloc(preassigns, struct pre_assign *,
-			INIT_SRC * sizeof(struct pre_assign), "add_preassign");
+		emalloc(preassigns, struct pre_assign *, INIT_SRC * sizeof(struct pre_assign));
 		alloc_assigns = INIT_SRC;
 	} else if (numassigns >= alloc_assigns) {
 		alloc_assigns *= 2;
-		erealloc(preassigns, struct pre_assign *,
-			alloc_assigns * sizeof(struct pre_assign), "add_preassigns");
+		erealloc(preassigns, struct pre_assign *, alloc_assigns * sizeof(struct pre_assign));
 	}
 	preassigns[numassigns].type = type;
 	preassigns[numassigns].val = estrdup(val, strlen(val));
@@ -607,6 +568,14 @@ add_preassign(enum assign_type type, char *val)
 static void
 usage(int exitval, FILE *fp)
 {
+	static const char gnu_url[] = "https://ftp.gnu.org/gnu/gawk";
+	static const char beta_url[] = "https://www.skeeve.com/gawk";
+	const char *url;
+	int major_version, minor_version, patchlevel;
+
+	major_version = minor_version = patchlevel = 0;
+	sscanf(PACKAGE_VERSION, "%d.%d.%d", & major_version, & minor_version, & patchlevel);
+
 	/* Not factoring out common stuff makes it easier to translate. */
 	fprintf(fp, _("Usage: %s [POSIX or GNU style options] -f progfile [--] file ...\n"),
 		myname);
@@ -631,6 +600,7 @@ usage(int exitval, FILE *fp)
 	fputs(_("\t-h\t\t\t--help\n"), fp);
 	fputs(_("\t-i includefile\t\t--include=includefile\n"), fp);
 	fputs(_("\t-I\t\t\t--trace\n"), fp);
+	fputs(_("\t-k\t\t\t--csv\n"), fp);
 	fputs(_("\t-l library\t\t--load=library\n"), fp);
 	/*
 	 * TRANSLATORS: the "fatal", "invalid" and "no-ext" here are literal
@@ -649,9 +619,6 @@ usage(int exitval, FILE *fp)
 	fputs(_("\t-S\t\t\t--sandbox\n"), fp);
 	fputs(_("\t-t\t\t\t--lint-old\n"), fp);
 	fputs(_("\t-V\t\t\t--version\n"), fp);
-#ifdef NOSTALGIA
-	fputs(_("\t-W nostalgia\t\t--nostalgia\n"), fp);
-#endif
 #ifdef GAWKDEBUG
 	fputs(_("\t-Y\t\t\t--parsedebug\n"), fp);
 #endif
@@ -669,6 +636,17 @@ printed version.  This same information may be found at\n\
 https://www.gnu.org/software/gawk/manual/html_node/Bugs.html.\n\
 PLEASE do NOT try to report bugs by posting in comp.lang.awk,\n\
 or by using a web forum such as Stack Overflow.\n\n"), fp);
+
+	// 5.2.60 is beta release on master, will become 5.3.0.
+	// 5.2.2a is beta release on stable, will become 5.2.3.
+	if (patchlevel >= 60 || isalpha((int) PACKAGE_VERSION[strlen(PACKAGE_VERSION)-1]))
+		url = beta_url;
+	else
+		url = gnu_url;
+
+	/* ditto */
+	fprintf(fp, _("Source code for gawk may be obtained from\n%s/gawk-%s.tar.gz\n\n"),
+		url, PACKAGE_VERSION);
 
 	/* ditto */
 	fputs(_("gawk is a pattern scanning and processing language.\n\
@@ -1096,6 +1074,14 @@ load_procinfo()
 		groupset = NULL;
 	}
 #endif
+
+#ifdef USE_PERSISTENT_MALLOC
+	update_PROCINFO_str("pma", get_pma_version());
+#endif /* USE_PERSISTENT_MALLOC */
+
+	if (do_csv)
+		update_PROCINFO_num("CSV", 1);
+
 	load_procinfo_argv();
 	return PROCINFO_node;
 }
@@ -1236,7 +1222,7 @@ arg_assign(char *arg, bool initing)
 		// typed regex
 		size_t len = strlen(cp) - 3;
 
-		ezalloc(cp2, char *, len + 1, "arg_assign");
+		ezalloc(cp2, char *, len + 1);
 		memcpy(cp2, cp + 2, len);
 
 		it = make_typed_regex(cp2, len);
@@ -1255,7 +1241,7 @@ arg_assign(char *arg, bool initing)
 		 * This makes sense, so we do it too.
 		 * In addition, remove \-<newline> as in scanning.
 		 */
-		it = make_str_node(cp, strlen(cp), SCAN | ELIDE_BACK_NL);
+		it = make_str_node(cp, strlen(cp), SCAN);
 		it->flags |= USER_INPUT;
 #ifdef LC_NUMERIC
 		/*
@@ -1325,56 +1311,11 @@ catchsig(int sig)
 	/* NOTREACHED */
 }
 
-#ifdef HAVE_LIBSIGSEGV
-/* catchsegv --- for use with libsigsegv */
-
-static int
-catchsegv(void *fault_address, int serious)
-{
-	if (errcount > 0)	// assume a syntax error corrupted our data structures
-		exit(EXIT_FATAL);
-
-	set_loc(__FILE__, __LINE__);
-	msg(_("fatal error: internal error: segfault"));
-	fflush(NULL);
-	abort();
-	/*NOTREACHED*/
-	return 0;
-}
-
-/* catchstackoverflow --- for use with libsigsegv */
-
-static void
-catchstackoverflow(int emergency, stackoverflow_context_t scp)
-{
-	set_loc(__FILE__, __LINE__);
-	msg(_("fatal error: internal error: stack overflow"));
-	fflush(NULL);
-	abort();
-	/*NOTREACHED*/
-	return;
-}
-#endif /* HAVE_LIBSIGSEGV */
-
-/* nostalgia --- print the famous error message and die */
-
-static void
-nostalgia()
-{
-	/*
-	 * N.B.: This string is not gettextized, on purpose.
-	 * So there.
-	 */
-	fprintf(stderr, "awk: bailing out near line 1\n");
-	fflush(stderr);
-	abort();
-}
-
 #ifdef USE_PERSISTENT_MALLOC
 /* get_pma_version --- get a usable version string out of PMA */
 
 const char *
-get_pma_version()
+get_pma_version(void)
 {
 	static char buf[200];
 	const char *open, *close;
@@ -1481,7 +1422,7 @@ init_groupset()
 		return;
 
 	/* fill in groups */
-	emalloc(groupset, GETGROUPS_T *, ngroups * sizeof(GETGROUPS_T), "init_groupset");
+	emalloc(groupset, GETGROUPS_T *, ngroups * sizeof(GETGROUPS_T));
 
 	ngroups = getgroups(ngroups, groupset);
 	/* same thing here, give up but keep going */
@@ -1499,7 +1440,7 @@ char *
 estrdup(const char *str, size_t len)
 {
 	char *s;
-	emalloc(s, char *, len + 1, "estrdup");
+	emalloc(s, char *, len + 1);
 	memcpy(s, str, len);
 	s[len] = '\0';
 	return s;
@@ -1544,7 +1485,7 @@ save_argv(int argc, char **argv)
 {
 	int i;
 
-	emalloc(d_argv, char **, (argc + 1) * sizeof(char *), "save_argv");
+	emalloc(d_argv, char **, (argc + 1) * sizeof(char *));
 	for (i = 0; i < argc; i++)
 		d_argv[i] = estrdup(argv[i], strlen(argv[i]));
 	d_argv[argc] = NULL;
@@ -1591,7 +1532,7 @@ parse_args(int argc, char **argv)
 	/*
 	 * The + on the front tells GNU getopt not to rearrange argv.
 	 */
-	const char *optlist = "+F:f:v:W;bcCd::D::e:E:ghi:Il:L::nNo::Op::MPrSstVYZ:";
+	const char *optlist = "+F:f:v:W;bcCd::D::e:E:ghi:kIl:L::nNo::Op::MPrSstVYZ:";
 	int old_optind;
 	int c;
 	char *scan;
@@ -1690,6 +1631,10 @@ parse_args(int argc, char **argv)
 			do_itrace = true;
 			break;
 
+		case 'k':	// k is for "comma". it's a stretch, I know
+			do_flags |= DO_CSV;
+			break;
+
 		case 'l':
 			(void) add_srcfile(SRC_EXTLIB, optarg, srcfiles, NULL, NULL);
 			break;
@@ -1732,7 +1677,7 @@ parse_args(int argc, char **argv)
 			break;
 
 		case 'p':
-			if (do_pretty_print)
+			if (do_pretty_print && ! do_profile)
 				warning(_("`--profile' overrides `--pretty-print'"));
 			do_flags |= DO_PROFILE;
 			/* fall through */
@@ -1854,6 +1799,8 @@ parse_args(int argc, char **argv)
 out:
 	do_optimize = (do_optimize && ! do_pretty_print);
 
+	pma_mpfr_check();
+
 	return;
 }
 
@@ -1924,4 +1871,62 @@ set_current_namespace(const char *new_namespace)
 		efree((void *) current_namespace);
 
 	current_namespace = new_namespace;
+}
+
+/* check_pma_security --- make some minimal security checks */
+
+static void
+check_pma_security(const char *pma_file)
+{
+#ifdef USE_PERSISTENT_MALLOC
+	struct stat sbuf;
+	int euid = geteuid();
+
+	// don't use 'fatal' routine, it seems to need to allocate memory
+	// and we haven't initialized PMA yet.
+
+	if (pma_file == NULL)
+		return;
+	else if (stat(pma_file, & sbuf) < 0) {
+		fprintf(stderr, _("%s: fatal: cannot stat %s: %s\n"),
+				myname, pma_file, strerror(errno));
+		exit(EXIT_FATAL);
+	} else if (euid == 0) {
+		fprintf(stderr, _("%s: fatal: using persistent memory is not allowed when running as root.\n"), myname);
+		exit(EXIT_FATAL);
+	} else if (sbuf.st_uid != euid) {
+		fprintf(stderr, _("%s: warning: %s is not owned by euid %d.\n"),
+				myname, pma_file, euid);
+	}
+#endif /* USE_PERSISTENT_MALLOC */
+}
+
+/* enable_pma --- do the PMA flow, handle ASLR on Linux */
+
+static bool
+enable_pma(char **argv)
+{
+	const char *persist_file = getenv("GAWK_PERSIST_FILE");	/* backing file for PMA */
+
+#ifndef USE_PERSISTENT_MALLOC
+	if (persist_file != NULL) {
+		warning(_("persistent memory is not supported"));
+		return false;
+	}
+	return true;	// silence compiler warnings
+#else
+	os_disable_aslr(persist_file, argv);
+
+	check_pma_security(persist_file);
+	int pma_result = pma_init(1, persist_file);
+	if (pma_result != 0) {
+		// don't use 'fatal' routine, memory can't be allocated
+		fprintf(stderr, _("%s: fatal: persistent memory allocator failed to initialize: return value %d, pma.c line: %d.\n"),
+				myname, pma_result, pma_errno);
+		exit(EXIT_FATAL);
+	}
+
+
+	return (persist_file != NULL);
+#endif
 }

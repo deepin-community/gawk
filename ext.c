@@ -7,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 1995 - 2001, 2003-2014, 2016-2020, 2022,
+ * Copyright (C) 1995 - 2001, 2003-2014, 2016-2020, 2022, 2025,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -112,7 +112,7 @@ make_builtin(const char *name_space, const awk_ext_func_t *funcinfo)
 
 		size_t len = strlen(name_space) + 2 + strlen(name) + 1;
 		char *buf;
-		emalloc(buf, char *, len, "make_builtin");
+		emalloc(buf, char *, len);
 		sprintf(buf, "%s::%s", name_space, name);
 		install_name = buf;
 
@@ -204,6 +204,11 @@ get_actual_argument(NODE *t, int i, bool want_array)
 		if (want_array)
 			return force_array(t, false);
 		else {
+			if (t->type == Node_elem_new) {
+				elem_new_reset(t);
+				if (t->valref > 1)	// ADR: 2/2025: Can this happen?
+					unref(t);
+			}
 			t->type = Node_var;
 			t->var_value = dupnode(Nnull_string);
 			return t->var_value;

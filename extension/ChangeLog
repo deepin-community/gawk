@@ -1,3 +1,142 @@
+2025-04-02         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.3.2: Release tar made.
+
+2025-03-09         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* inplace.c (do_inplace_begin): Additional hoop jumping to
+	silence clang warnings. Sheesh.
+
+2024-11-13         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* time.3am: Fix spelling of "strptime()". Thanks to
+	James Ghofulpo <james@ghofulpo.com> for the report.
+
+2024-09-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.3.1: Release tar made.
+
+2024-09-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* configure.ac: Bump version, update copyright year.
+	* inplace.3am, time.c: update copyright year.
+
+2024-06-08         John E. Malmberg      <wb8tyw@qsl.net>
+
+	* time.c: Remove unneeded define for OpenVMS
+
+2024-02-12         Tim Rice              <trice@posteo.net>
+
+	* inplace.3am: Add a note that symbolic and hard links are
+	replaced with a new file.
+
+2024-01-20         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* configure.ac: MPFR on 32 bit Power PC is back
+	to working. Remove the check that disables it.
+
+2024-01-13         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* time.c (do_gettimeofday): Small bug fix. Thanks to
+	Andrew Schorr for pointing it out.
+
+2024-01-12         Arnold D. Robbins     <arnold@skeeve.com>
+
+	Use newer interfaces for getting the time if they're available.
+	Thanks to Andreas Schwab <schwab@suse.de> and Andrew Schorr.
+
+	* time.c (do_gettimeofday): Use clock_gettime() or gettimeofday() or
+	time(), in that order.
+	* configure.ac: Add check for clock_gettime().
+
+2023-11-02         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.3.0: Release tar ball made.
+
+2023-10-22         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* Makefile.am: Update copyright year.
+
+2023-10-19         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* configure.ac: Update version.
+
+2023-06-02         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* readdir.3am: Very small fix.
+
+2023-05-28         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* readdir.c: Add checking of PROCINFO["readdir_override"].
+	* readdir.3am: Updated.
+
+2023-05-25         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* readdir.c: Synced fully with readdir_test.c.
+	* readdir_test.c: Removed.
+
+2023-05-25         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* readdir_test.c: Sync somewhat with readdir.c. A full
+	sync is W.I.P.
+
+2023-05-24         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* readdir.c (dir_can_take_file): Only check the stat buffer;
+	the open fd could be on a regular file.
+	(dir_take_control_of): Add the filename to the error output.
+
+2023-05-07         Arnold D. Robbins     <arnold@skeeve.com>
+
+
+	* 5.2.2: Release tar ball made.
+
+2023-05-07         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* configure.ac: Update version.
+
+2023-04-14         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* filefuncs.c, readdir.c, readdir_test.c, time.c: Update
+	copyright year.
+
+2023-03-29         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* filefuncs.c: Fix a typo in a comment. Thanks to
+	zhou shvinq <zhoushuiqing321@outlook.com> for the report.
+
+2023-03-12         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* time.c: Include ../missing_d/strptime.c if the strptime()
+	isn't available natively. Adjust other ifdefs.
+	Thanks to Eli Zaretskii for the encouragement.
+
+2023-03-12  Eli Zaretskii  <eliz@gnu.org>
+
+	* readdir_test.c (dir_can_take_file): Adjust condition to changes
+	in io.c.
+
+2023-02-27         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* readdir.c (dir_can_take_file): Test is more flexible, based on
+	change in gawk's iop.c:iop_alloc() function.
+
+2023-02-09         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* readdir.c (dir_can_take_control_of): If ! HAVE_OPENDIR,
+	don't leak any open file descriptor. Thanks to
+	Eli Zaretskii <eliz@gnu.org> for the bug report.
+
+2023-01-22         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* configure.ac: Check also for strptime.
+	Update copyright year.
+	* time.3am: Update copyright. Undeprecate this extension.
+	Add strptime() doc.
+	* time.c (issue_warning): Removed function and use.
+	(do_strptime): Added.
+	(ext_version): Bump to 1.2.
+
 2022-11-17         Arnold D. Robbins     <arnold@skeeve.com>
 
 	* 5.2.1: Release tar ball made.

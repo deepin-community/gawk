@@ -1,3 +1,63 @@
+2025-04-02         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.3.2: Release tar made.
+
+2025-03-20         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* pma.m4: Use AC_COMPILE_IF_ELSE instead of AC_TRY_COMPILE.
+	Thanks to autoreconf.
+
+2025-02-16         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* pma.m4: Add compilation check for ADDR_NO_RANDOMIZE. It's an
+	enum, not a define.  It's not available on really old Linux
+	systems, like CentOS 5.
+
+2025-02-01         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* pma.m4: On macos, no longer need to do anything special,
+	but we do have to have a case for it so that PMA is enabled.
+
+2025-01-29         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* pma.m4: On Linux, no longer need to do anything special,
+	but we do have to have a case for it so that PMA is enabled.
+
+2024-09-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.3.1: Release tar made.
+
+2024-09-17         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* readline.m4: Update copyright year.
+
+2024-05-26         Ross Burton           <ross.burton@arm.com>
+
+	* readline.m4: Add more needed includes for cross-compiling case.
+
+2023-11-02         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.3.0: Release tar ball made.
+
+2023-05-07         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* 5.2.2: Release tar ball made.
+
+2023-04-14         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* pma.m4: Update copyright year, switch to `dnl' as comment
+	marker in the copyright statement.
+
+2022-12-01         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* libsigsegv.m4: Removed.
+
+2022-11-27         Arnold D. Robbins     <arnold@skeeve.com>
+
+	* pma.m4: Don't build an x86 binary on non-x86 macOS systems.
+	See https://trac.macports.org/ticket/66329. Thanks to
+	Marius Schamschula <lists@schamschula.com> for the report.
+
 2022-11-17         Arnold D. Robbins     <arnold@skeeve.com>
 
 	* 5.2.1: Release tar ball made.

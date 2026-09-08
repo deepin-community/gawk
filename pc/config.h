@@ -15,6 +15,9 @@
 /* Define to 1 if the `getpgrp' function requires zero arguments. */
 #define GETPGRP_VOID 1
 
+/* Define to 1 if we have ADDR_NO_RANDOMIZE value */
+#undef HAVE_ADDR_NO_RANDOMIZE
+
 /* Define to 1 if you have the `alarm' function. */
 #define HAVE_ALARM 1
 
@@ -34,6 +37,9 @@
 /* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
    the CoreFoundation framework. */
 #undef HAVE_CFPREFERENCESCOPYAPPVALUE
+
+/* Define to 1 if you have the `clock_gettime' function. */
+#undef HAVE_CLOCK_GETTIME
 
 /* Define to 1 if bool, true and false work as per C2023. */
 #undef HAVE_C_BOOL
@@ -64,6 +70,9 @@
 /* have getaddrinfo */
 #define HAVE_GETADDRINFO 1
 
+/* Define to 1 if you have the `getdtablesize' function. */
+#undef HAVE_GETDTABLESIZE
+
 /* Define to 1 if you have the `getgrent' function. */
 #undef HAVE_GETGRENT
 
@@ -72,6 +81,9 @@
 
 /* Define if the GNU gettext() function is already present or preinstalled. */
 #undef HAVE_GETTEXT
+
+/* Define to 1 if you have the `gettimeofday' function. */
+#undef HAVE_GETTIMEOFDAY
 
 /* Define to 1 if you have the `grantpt' function. */
 #undef HAVE_GRANTPT
@@ -115,14 +127,14 @@
 /* Define to 1 if you have a fully functional readline library. */
 /* #undef HAVE_LIBREADLINE */
 
-/* Define if you have the libsigsegv library. */
-#undef HAVE_LIBSIGSEGV
-
 /* Define to 1 if you have the <locale.h> header file. */
 #define HAVE_LOCALE_H 1
 
 /* Define to 1 if the system has the type 'long long int'. */
 #undef HAVE_LONG_LONG_INT
+
+/* Define to 1 if you have the `lstat' function. */
+#undef HAVE_LSTAT
 
 /* Define to 1 if you have the `mbrlen' function. */
 #define HAVE_MBRLEN 1
@@ -169,6 +181,9 @@
 /* Define to 1 if you have the <netinet/in.h> header file. */
 #undef HAVE_NETINET_IN_H
 
+/* Define to 1 if you have the `personality' function. */
+#undef HAVE_PERSONALITY
+
 /* Define to 1 if you have the `posix_openpt' function. */
 #undef HAVE_POSIX_OPENPT
 
@@ -192,6 +207,9 @@
 
 /* we have sockets on this system */
 #define HAVE_SOCKETS 1
+
+/* Define to 1 if you have the <spawn.h> header file. */
+#undef HAVE_SPAWN_H
 
 /* Define to 1 if you have the <stdbool.h> header file. */
 #define HAVE_STDBOOL_H 1
@@ -270,6 +288,9 @@
 
 /* Define to 1 if you have the <sys/param.h> header file. */
 #define HAVE_SYS_PARAM_H 1
+
+/* Define to 1 if you have the <sys/personality.h> header file. */
+#undef HAVE_SYS_PERSONALITY_H
 
 /* Define to 1 if you have the <sys/select.h> header file. */
 #undef HAVE_SYS_SELECT_H
@@ -351,6 +372,9 @@
 /* systems should define this type here */
 #define HAVE_WINT_T 1
 
+/* Define to 1 if you have the `_NSGetExecutablePath' function. */
+#undef HAVE__NSGETEXECUTABLEPATH
+
 /* Define to 1 if you have the `__etoa_l' function. */
 #undef HAVE___ETOA_L
 
@@ -367,7 +391,7 @@
 #define PACKAGE_NAME "GNU Awk"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "GNU Awk 5.2.1"
+#define PACKAGE_STRING "GNU Awk 5.3.2"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "gawk"
@@ -376,7 +400,7 @@
 #define PACKAGE_URL "http://www.gnu.org/software/gawk/"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "5.2.1"
+#define PACKAGE_VERSION "5.3.2"
 
 /* Define to 1 if *printf supports %a format */
 #define PRINTF_HAS_A_FORMAT 1
@@ -504,7 +528,7 @@
 
 
 /* Version number of package */
-#define VERSION "5.2.1"
+#define VERSION "5.3.2"
 
 /* Number of bits in a file offset, on hosts where this is settable. */
 #undef _FILE_OFFSET_BITS

@@ -1,5 +1,5 @@
 /* dfa.h - declarations for GNU deterministic regexp compiler
-   Copyright (C) 1988, 1998, 2007, 2009-2022 Free Software Foundation, Inc.
+   Copyright (C) 1988, 1998, 2007, 2009-2025 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -12,14 +12,20 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc.,
-   51 Franklin Street - Fifth Floor, Boston, MA  02110-1301, USA */
+   along with this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 /* Written June, 1988 by Mike Haertel */
 
 #ifndef DFA_H_
 #define DFA_H_
+
+#ifndef GAWK
+/* This file uses _Noreturn, _GL_ATTRIBUTE_DEALLOC, _GL_ATTRIBUTE_MALLOC,
+   _GL_ATTRIBUTE_PURE, _GL_ATTRIBUTE_RETURNS_NONNULL.  */
+#if !_GL_CONFIG_H_INCLUDED
+ #error "Please include config.h first."
+#endif
+#endif /* GAWK */
 
 #include "idx.h"
 #include <regex.h>

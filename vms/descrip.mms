@@ -119,7 +119,7 @@ AWKOBJ1 = array.obj,awkgram.obj,builtin.obj,cint_array.obj,\
 
 AWKOBJ2 = int_array.obj,io.obj,localeinfo.obj,main.obj,mpfr.obj,msg.obj,\
 	node.obj,random.obj,re.obj,regex.obj,replace.obj,\
-	str_array.obj,symbol.obj,version.obj
+	str_array.obj,symbol.obj,version.obj,printf.obj
 
 AWKOBJS = $(AWKOBJ1),$(AWKOBJ2)
 
@@ -138,10 +138,10 @@ all : gawk gawk_debug
 
 # dummy target to allow building "gawk" in addition to explicit "gawk.exe"
 gawk : gawk.exe
-      @	$(ECHO) "$< is upto date"
+      @	$(ECHO) "$< is up to date"
 
 gawk_debug : gawk_debug.exe
-      @	$(ECHO) "$< is upto date"
+      @	$(ECHO) "$< is up to date"
 
 # rules to build gawk
 gawk.exe : $(GAWKOBJ) $(AWKOBJS) $(VMSOBJS) gawk.opt
@@ -182,15 +182,17 @@ command.obj	: command.c cmd.h
 debug.obj	: debug.c cmd.h
 dfa.obj		: $(SUPPORT)dfa.c $(SUPPORT)dfa.h
 
+# MMS 4.O gets MMS$SOURCE wrong here
 dynarrray_resize.obj : $(MALLOC)dynarray_resize.c $(MALLOC)dynarray.h
     $define/user malloc $(MALLOC)
-    $(CC)$(CEFLAGS)/define=(HAVE_CONFIG_H)/object=$(MMS$TARGET) $(MMS$SOURCE)
+    $(CC)$(CEFLAGS)/define=(HAVE_CONFIG_H)/object=$(MMS$TARGET) \
+      $(MALLOC)dynarray_resize.c
 
 ext.obj		: ext.c
 eval.obj	: eval.c
 field.obj	: field.c
 floatcomp.obj	: floatcomp.c
-gawkaoi.obj	: gawkapi.c
+gawkapi.obj	: gawkapi.c
 gawkmisc.obj	: gawkmisc.c $(VMSDIR)gawkmisc.vms
 getopt.obj	: $(SUPPORT)getopt.c
 getopt1.obj	: $(SUPPORT)getopt1.c
@@ -201,16 +203,19 @@ main.obj	: main.c
 msg.obj		: msg.c
 mpfr.obj	: mpfr.c
 node.obj	: node.c
+printf.obj      : printf.c
 profile.obj	: profile.c
 random.obj	: $(SUPPORT)random.c $(SUPPORT)random.h
 re.obj		: re.c
 
+# MMS 4.O gets MMS$SOURCE wrong here
 regex.obj	: $(SUPPORT)regex.c $(SUPPORT)regcomp.c \
 		  $(SUPPORT)regex_internal.c $(SUPPORT)regexec.c \
 		  $(SUPPORT)regex.h $(SUPPORT)regex_internal.h \
                   $(MALLOC)dynarray.h
     $define/user malloc $(MALLOC)
-    $(CC)$(CEFLAGS)/define=(HAVE_CONFIG_H)/object=$(MMS$TARGET) $(MMS$SOURCE)
+    $(CC)$(CEFLAGS)/define=(HAVE_CONFIG_H)/object=$(MMS$TARGET) \
+      $(SUPPORT)regex.c
 
 str_array.obj	: str_array.c
 symbol.obj	: symbol.c
@@ -282,6 +287,7 @@ ext_gawkdirfd_h = [.extension]gawkdirfd.h config.h nonposix.h
 
 extensions : filefuncs.exe fnmatch.exe inplace.exe ordchr.exe readdir.exe \
 	revoutput.exe revtwoway.exe rwarray.exe testext.exe time.exe
+        @ write sys$output "$< are up to date"
 
 filefuncs.exe : filefuncs.obj stack.obj gawkfts.obj $(plug_opt)
 	link/share=$(MMS$TARGET) $(MMS$SOURCE), stack.obj, gawkfts.obj, \

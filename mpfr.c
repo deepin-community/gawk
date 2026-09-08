@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2012, 2013, 2015, 2017, 2018, 2019, 2021, 2022,
+ * Copyright (C) 2012, 2013, 2015, 2017, 2018, 2019, 2021, 2022, 2024, 2025,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -350,10 +350,8 @@ mpg_force_number(NODE *n)
 	char *cp, *cpend;
 
 	if (n->type == Node_elem_new) {
+		elem_new_reset(n);
 		n->type = Node_val;
-		n->flags &= ~STRING;
-		n->stptr[0] = '0';	// STRCUR is still set
-		n->stlen = 1;
 
 		return n;
 	}
@@ -425,16 +423,16 @@ mpg_format_val(const char *format, int index, NODE *s)
 		return make_string(result, strlen(result));
 	}
 
-	/* create dummy node for a sole use of format_tree */
+	/* create dummy node for a sole use of format_args */
 	dummy[1] = s;
 	oflags = s->flags;
 
 	if (is_mpg_integer(s) || mpfr_integer_p(s->mpg_numbr)) {
 		/* integral value, use %d */
-		r = format_tree("%d", 2, dummy, 2);
+		r = format_args("%d", 2, dummy, 2);
 		s->stfmt = STFMT_UNUSED;
 	} else {
-		r = format_tree(format, fmt_list[index]->stlen, dummy, 2);
+		r = format_args(format, fmt_list[index]->stlen, dummy, 2);
 		assert(r != NULL);
 		s->stfmt = index;
 	}
@@ -983,7 +981,7 @@ get_intval(NODE *t1, int argnum, const char *op)
                                 	op, argnum, left)
 				);
 
-			emalloc(pz, mpz_ptr, sizeof (mpz_t), "get_intval");
+			emalloc(pz, mpz_ptr, sizeof (mpz_t));
 			mpz_init(pz);
 			return pz;	/* should be freed */
 		}
@@ -1002,7 +1000,7 @@ get_intval(NODE *t1, int argnum, const char *op)
 				);
 		}
 
-		emalloc(pz, mpz_ptr, sizeof (mpz_t), "get_intval");
+		emalloc(pz, mpz_ptr, sizeof (mpz_t));
 		mpz_init(pz);
 		mpfr_get_z(pz, left, MPFR_RNDZ);	/* float to integer conversion */
 		return pz;	/* should be freed */
