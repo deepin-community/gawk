@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2022 the Free Software Foundation, Inc.
+ * Copyright (C) 1986, 1988, 1989, 1991-2025 the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
  * AWK Programming Language.
@@ -30,21 +30,9 @@
  * any system headers.  Otherwise, extreme death, destruction
  * and loss of life results.
  */
-#if defined(_TANDEM_SOURCE)
-/*
- * config.h forces this even on non-tandem systems but it
- * causes problems elsewhere if used in the check below.
- * so workaround it. bleah.
- */
-#define tandem_for_real	1
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
-
-#if defined(tandem_for_real) && ! defined(_SCO_DS)
-#define _XOPEN_SOURCE_EXTENDED 1
 #endif
 
 #include <stdio.h>
@@ -86,6 +74,9 @@ extern int errno;
 /* We can handle multibyte strings.  */
 #include <wchar.h>
 #include <wctype.h>
+#ifdef __CYGWIN__ /* Define helper function for large Unicode values */
+extern size_t wcitomb (char *s, int wc, mbstate_t *ps);
+#endif
 
 #ifdef STDC_HEADERS
 #include <float.h>
@@ -104,6 +95,12 @@ extern int errno;
 /* ----------------- System dependencies (with more includes) -----------*/
 
 /* This section is the messiest one in the file, not a lot that can be done */
+
+/* AIX's <sys/cred.h> uses some names defined here in function prototypes.
+   Therefore, it must be included first or the build fails.  */
+#ifdef _AIX
+# include <sys/cred.h>
+#endif
 
 #ifndef VMS
 #ifdef HAVE_FCNTL_H
@@ -294,6 +291,13 @@ enum commenttype {
 	FOR_COMMENT	// special case
 };
 
+enum escape_results {
+	ESCAPE_OK,		// nbytes == 1 to MB_CUR_MAX: the length of the translated escape sequence
+	ESCAPE_CONV_ERR,	// wcrtomb conversion error
+	ESCAPE_TERM_BACKSLASH,	// terminal backslash (to be preserved in cmdline strings)
+	ESCAPE_LINE_CONTINUATION	// line continuation  (backslash-newline pair)
+};
+
 /* string hash table */
 #define ahnext		hs.next
 #define	ahname		hs.name	/* a string index node */
@@ -377,7 +381,11 @@ typedef struct exp_node {
 			char *sp;
 			size_t slen;
 			int idx;
-			wchar_t *wsp;
+			union {	// this union is for convenience of space
+				// reuse; the elements aren't otherwise related
+				wchar_t *wsp;
+				char *vn;
+			} z;
 			size_t wslen;
 			struct exp_node *typre;
 			enum commenttype comtype;
@@ -501,8 +509,13 @@ typedef struct exp_node {
 #define stlen	sub.val.slen
 #define stfmt	sub.val.idx
 #define strndmode sub.val.rndmode
-#define wstptr	sub.val.wsp
+#define wstptr	sub.val.z.wsp
 #define wstlen	sub.val.wslen
+
+/* Node_elem_new */
+#define elemnew_vname	sub.val.z.vn
+#define elemnew_parent	sub.val.typre
+
 #ifdef HAVE_MPFR
 #define mpg_numbr	sub.val.nm.mpnum
 #define mpg_i		sub.val.nm.mpi
@@ -623,6 +636,7 @@ typedef enum opcodeval {
 	Op_store_var,		/* simple variable assignment optimization */
 	Op_store_sub,		/* array[subscript] assignment optimization */
 	Op_store_field,  	/* $n assignment optimization */
+	Op_store_field_exp,  	/* $n assignment optimization in an expression */
 	Op_assign_times,
 	Op_assign_quotient,
 	Op_assign_mod,
@@ -972,7 +986,7 @@ struct redirect {
 		RED_READ	= 4,
 		RED_WRITE	= 8,
 		RED_APPEND	= 16,
-		RED_NOBUF	= 32,
+		RED_FLUSH	= 32,
 		RED_USED	= 64,	/* closed temporarily to reuse fd */
 		RED_EOF		= 128,
 		RED_TWOWAY	= 256,
@@ -1147,7 +1161,7 @@ extern const array_funcs_t int_array_func;
 /* special node used to indicate success in array routines (not NULL) */
 extern NODE *success_node;
 
-extern struct block_header nextfree[];
+extern struct block_header nextfree[BLOCK_MAX];
 extern bool field0_valid;
 
 extern bool do_itrace;	/* separate so can poke from a debugger */
@@ -1172,6 +1186,7 @@ extern enum do_flag_values {
 	DO_PROFILE	   = 0x02000,	/* profile the program */
 	DO_DEBUG	   = 0x04000,	/* debug the program */
 	DO_MPFR		   = 0x08000,	/* arbitrary-precision floating-point math */
+	DO_CSV		   = 0x10000,	/* process comma-separated-value files */
 } do_flags;
 
 #define do_traditional      (do_flags & DO_TRADITIONAL)
@@ -1186,6 +1201,7 @@ extern enum do_flag_values {
 #define do_sandbox          (do_flags & DO_SANDBOX)
 #define do_debug            (do_flags & DO_DEBUG)
 #define do_mpfr             (do_flags & DO_MPFR)
+#define do_csv              (do_flags & DO_CSV)
 
 extern bool do_optimize;
 extern int use_lc_numeric;
@@ -1373,14 +1389,19 @@ extern void r_freeblock(void *, int id);
 // Flags for making string nodes
 #define		SCAN			1
 #define		ALREADY_MALLOCED	2
-#define		ELIDE_BACK_NL		4
 
 #define	cant_happen(format, ...)	r_fatal("internal error: file %s, line %d: " format, \
 				__FILE__, __LINE__, __VA_ARGS__)
 
-#define	emalloc(var,ty,x,str)	(void) (var = (ty) emalloc_real((size_t)(x), str, #var, __FILE__, __LINE__))
-#define	ezalloc(var,ty,x,str)	(void) (var = (ty) ezalloc_real((size_t)(x), str, #var, __FILE__, __LINE__))
-#define	erealloc(var,ty,x,str)	(void) (var = (ty) erealloc_real((void *) var, (size_t)(x), str, #var, __FILE__, __LINE__))
+#ifdef USE_REAL_MALLOC
+#define	emalloc(var,ty,x)	(void) (var = (ty) malloc((size_t)(x)))
+#define	ezalloc(var,ty,x)	(void) (var = (ty) calloc((size_t)(x), 1))
+#define	erealloc(var,ty,x)	(void) (var = (ty) realloc((void *) var, (size_t)(x)))
+#else
+#define	emalloc(var,ty,x)	(void) (var = (ty) emalloc_real((size_t)(x), __func__, #var, __FILE__, __LINE__))
+#define	ezalloc(var,ty,x)	(void) (var = (ty) ezalloc_real((size_t)(x), __func__, #var, __FILE__, __LINE__))
+#define	erealloc(var,ty,x)	(void) (var = (ty) erealloc_real((void *) var, (size_t)(x), __func__, #var, __FILE__, __LINE__))
+#endif
 
 #define efree(p)	free(p)
 
@@ -1465,6 +1486,8 @@ extern NODE *make_regnode(NODETYPE type, NODE *exp);
 extern bool validate_qualified_name(char *token);
 /* builtin.c */
 extern void efflush(FILE *fp, const char *from, struct redirect *rp);
+extern void efwrite(const void *ptr, size_t size, size_t count, FILE *fp, const char *from,
+		struct redirect *rp, bool flush);
 extern double double_to_int(double d);
 extern NODE *do_exp(int nargs);
 extern NODE *do_fflush(int nargs);
@@ -1496,7 +1519,7 @@ extern NODE *do_sub(int nargs, unsigned int flags);
 extern NODE *call_sub(const char *name, int nargs);
 extern NODE *call_match(int nargs);
 extern NODE *call_split_func(const char *name, int nargs);
-extern NODE *format_tree(const char *, size_t, NODE **, long);
+extern NODE *format_args(const char *, size_t, NODE **, long);
 extern NODE *do_lshift(int nargs);
 extern NODE *do_rshift(int nargs);
 extern NODE *do_and(int nargs);
@@ -1553,6 +1576,7 @@ extern STACK_ITEM *grow_stack(void);
 extern void dump_fcall_stack(FILE *fp);
 extern int register_exec_hook(Func_pre_exec preh, Func_post_exec posth);
 extern NODE **r_get_field(NODE *n, Func_ptr *assign, bool reference);
+extern void elem_new_reset(NODE *n);
 extern NODE *elem_new_to_scalar(NODE *n);
 /* ext.c */
 extern NODE *do_ext(int nargs);
@@ -1568,7 +1592,8 @@ extern NODE *get_actual_argument(NODE *, int, bool);
 #endif
 /* field.c */
 extern void init_fields(void);
-extern void set_record(const char *buf, int cnt, const awk_fieldwidth_info_t *);
+extern void init_csv_fields(void);
+extern void set_record(const char *buf, size_t cnt, const awk_fieldwidth_info_t *);
 extern void reset_record(void);
 extern void rebuild_record(void);
 extern void set_NF(void);
@@ -1621,6 +1646,7 @@ extern int os_is_setuid(void);
 extern int os_setbinmode(int fd, int mode);
 extern void os_restore_mode(int fd);
 extern void os_maybe_set_errno(void);
+extern void os_disable_aslr(const char *persist_file, char **argv);
 extern size_t optimal_bufsize(int fd, struct stat *sbuf);
 extern int ispath(const char *file);
 extern int isdirpunct(int c);
@@ -1628,6 +1654,7 @@ extern int isdirpunct(int c);
 /* io.c */
 extern void init_sockets(void);
 extern void init_io(void);
+extern void init_csv_records(void);
 extern void register_input_parser(awk_input_parser_t *input_parser);
 extern void register_output_wrapper(awk_output_wrapper_t *wrapper);
 extern void register_two_way_processor(awk_two_way_processor_t *processor);
@@ -1654,10 +1681,11 @@ extern bool inrec(IOBUF *iop, int *errcode);
 extern int nextfile(IOBUF **curfile, bool skipping);
 extern bool is_non_fatal_std(FILE *fp);
 extern bool is_non_fatal_redirect(const char *str, size_t len);
-extern void ignore_sigpipe(void);
-extern void set_sigpipe_to_default(void);
 extern bool non_fatal_flush_std_file(FILE *fp);
 extern size_t gawk_fwrite(const void *buf, size_t size, size_t count, FILE *fp, void *opaque);
+#ifndef PIPES_SIMULATED
+extern int wait_any(int interesting);
+#endif
 
 /* main.c */
 extern int arg_assign(char *arg, bool initing);
@@ -1722,6 +1750,7 @@ extern void (*lintfunc)(const char *mesg, ...);
 /* profile.c */
 extern void init_profiling_signals(void);
 extern void set_prof_file(const char *filename);
+extern void close_prof_file(void);
 extern void dump_prog(INSTRUCTION *code);
 extern char *pp_number(NODE *n);
 extern char *pp_string(const char *in_str, size_t len, int delim);
@@ -1737,7 +1766,7 @@ extern NODE *make_str_node(const char *s, size_t len, int flags);
 extern NODE *make_bool_node(bool value);
 extern NODE *make_typed_regex(const char *re, size_t len);
 extern void *more_blocks(int id);
-extern int parse_escape(const char **string_ptr);
+extern enum escape_results parse_escape(const char **string_ptr, const char **escseq, size_t *nbytes);
 extern NODE *str2wstr(NODE *n, size_t **ptr);
 extern NODE *wstr2str(NODE *n);
 #define force_wstring(n)	str2wstr(n, NULL)
@@ -1794,6 +1823,8 @@ extern NODE **function_list(bool sort);
 extern void print_vars(NODE **table, Func_print print_func, FILE *fp);
 extern bool check_param_names(void);
 extern bool is_all_upper(const char *name);
+extern void pma_mpfr_check(void);
+extern void pma_save_free_lists(void);
 
 /* floatcomp.c */
 #ifdef HAVE_UINTMAX_T
@@ -1878,6 +1909,18 @@ POP_SCALAR()
 		fatal(_("attempt to use array `%s' in a scalar context"), array_vname(t));
 	else if (t->type == Node_elem_new)
 		t = elem_new_to_scalar(t);
+	else if (t->type == Node_var_new) {
+		NODE *n = t;
+
+		t->type = Node_var;
+		// this should be a call to dupnode(), but there are
+		// ordering problems since we're in awk.h. Just
+		// do it manually, since it's the null string
+		t->var_value = Nnull_string;
+		t->var_value->valref++;
+		t = t->var_value;
+		DEREF(n);
+	}
 
 	return t;
 }
@@ -1949,8 +1992,8 @@ static inline NODE *
 force_string_fmt(NODE *s, const char *fmtstr, int fmtidx)
 {
 	if (s->type == Node_elem_new) {
+		elem_new_reset(s);
 		s->type = Node_val;
-		s->flags &= ~NUMBER;
 
 		return s;
 	}
@@ -1990,6 +2033,12 @@ unref(NODE *r)
 static inline NODE *
 force_number(NODE *n)
 {
+	if (n->type == Node_elem_new) {
+		elem_new_reset(n);
+		n->type = Node_val;
+
+		return n;
+	}
 	return (n->flags & NUMCUR) != 0 ? n : str2number(n);
 }
 
@@ -2011,7 +2060,9 @@ force_number(NODE *n)
 static inline NODE *
 fixtype(NODE *n)
 {
-	assert(n->type == Node_val);
+	if (n->type != Node_val)
+		cant_happen("%s: expected Node_val: got %s",
+				__func__, nodetype2str(n->type));
 	if ((n->flags & (NUMCUR|USER_INPUT)) == USER_INPUT)
 		return force_number(n);
 	if ((n->flags & INTIND) != 0)
@@ -2029,6 +2080,9 @@ fixtype(NODE *n)
 static inline bool
 boolval(NODE *t)
 {
+	if (t->type == Node_var)	// could have come from converted Node_elem_new
+		t = t->var_value;
+
 	(void) fixtype(t);
 	if ((t->flags & NUMBER) != 0)
 		return ! is_zero(t);

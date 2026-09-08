@@ -27,9 +27,11 @@ MPFR
 MSEC
 NF
 NR
+Nov
 OFMT
 OFS
 ORS
+Ozan
 PREC
 PROCINFO
 Printf
@@ -45,6 +47,7 @@ SYMTAB
 TEXTDOMAIN
 Trueman
 UTC
+Yigit
 abc
 asort
 asorti
@@ -59,6 +62,7 @@ compl
 coprocess
 coprocesses
 cos
+csv
 datespec
 dcgettext
 dcngettext

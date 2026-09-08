@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2022,
+ * Copyright (C) 1986, 1988, 1989, 1991-2025,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -24,11 +24,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/* For OSF/1 to get struct sockaddr_storage */
-#if defined(__osf__) && !defined(_OSF_SOURCE)
-#define _OSF_SOURCE
-#endif
-
 #include "awk.h"
 
 #ifdef HAVE_SYS_PARAM_H
@@ -41,6 +36,10 @@
 
 #ifndef O_ACCMODE
 #define O_ACCMODE	(O_RDONLY|O_WRONLY|O_RDWR)
+#endif
+
+#ifndef HAVE_GETDTABLESIZE
+#define getdtablesize()	(1024)	/* should be big enough */
 #endif
 
 #if ! defined(S_ISREG) && defined(S_IFREG)
@@ -213,7 +212,7 @@ typedef enum recvalues {
         NOTERM,         /* no terminator found, give me more input data */
         TERMATEND,      /* found terminator at end of buffer */
         TERMNEAREND     /* found terminator close to end of buffer, for when
-			   the RE might be match more data further in
+			   the RE might match more data further in
 			   the file. */
 } RECVALUE;
 
@@ -246,10 +245,9 @@ struct recmatch {
 static int iop_close(IOBUF *iop);
 static void close_one(void);
 static int close_redir(struct redirect *rp, bool exitwarn, two_way_close_type how);
-#ifndef PIPES_SIMULATED
-static int wait_any(int interesting);
-#endif
 static IOBUF *gawk_popen(const char *cmd, struct redirect *rp);
+static FILE *gawk_popen_write(const char *cmd);
+static int gawk_popen_write_close(FILE *fp);
 static IOBUF *iop_alloc(int fd, const char *name, int errno_val);
 static IOBUF *iop_finish(IOBUF *iop);
 static int gawk_pclose(struct redirect *rp);
@@ -260,14 +258,16 @@ static void find_input_parser(IOBUF *iop);
 static bool find_output_wrapper(awk_output_buf_t *outbuf);
 static void init_output_wrapper(awk_output_buf_t *outbuf);
 static bool find_two_way_processor(const char *name, struct redirect *rp);
+static bool avoid_flush(const char *name);
 
 static RECVALUE rs1scan(IOBUF *iop, struct recmatch *recm, SCANSTATE *state);
 static RECVALUE rsnullscan(IOBUF *iop, struct recmatch *recm, SCANSTATE *state);
 static RECVALUE rsrescan(IOBUF *iop, struct recmatch *recm, SCANSTATE *state);
+static RECVALUE csvscan(IOBUF *iop, struct recmatch *recm, SCANSTATE *state);
 
 static RECVALUE (*matchrec)(IOBUF *iop, struct recmatch *recm, SCANSTATE *state) = rs1scan;
 
-static int get_a_record(char **out, IOBUF *iop, int *errcode, const awk_fieldwidth_info_t **field_width);
+static int get_a_record(char **out, size_t *len, IOBUF *iop, int *errcode, const awk_fieldwidth_info_t **field_width);
 
 static void free_rp(struct redirect *rp);
 
@@ -338,6 +338,15 @@ init_io()
 	 */
 	if (PROCINFO_node != NULL)
 		read_can_timeout = true;
+}
+
+/* init_csv_records --- set up for CSV handling */
+
+void
+init_csv_records(void)
+{
+	if (do_csv)
+		matchrec = csvscan;
 }
 
 
@@ -565,21 +574,19 @@ bool
 inrec(IOBUF *iop, int *errcode)
 {
 	char *begin;
-	int cnt;
-	bool retval = true;
+	size_t cnt;
+	bool retval;
 	const awk_fieldwidth_info_t *field_width = NULL;
 
 	if (at_eof(iop) && no_data_left(iop))
-		cnt = EOF;
-	else if ((iop->flag & IOP_CLOSED) != 0)
-		cnt = EOF;
-	else
-		cnt = get_a_record(& begin, iop, errcode, & field_width);
-
-	/* Note that get_a_record may return -2 when I/O would block */
-	if (cnt < 0) {
 		retval = false;
-	} else {
+	else if ((iop->flag & IOP_CLOSED) != 0)
+		retval = false;
+	else
+		/* Note that get_a_record may return -2 when I/O would block */
+		retval = (get_a_record(& begin, & cnt, iop, errcode, & field_width) == 0);
+
+	if (retval) {
 		INCREMENT_REC(NR);
 		INCREMENT_REC(FNR);
 		set_record(begin, cnt, field_width);
@@ -693,7 +700,7 @@ redflags2str(int flags)
 		{ RED_READ,	"RED_READ" },
 		{ RED_WRITE,	"RED_WRITE" },
 		{ RED_APPEND,	"RED_APPEND" },
-		{ RED_NOBUF,	"RED_NOBUF" },
+		{ RED_FLUSH,	"RED_FLUSH" },
 		{ RED_EOF,	"RED_EOF" },
 		{ RED_TWOWAY,	"RED_TWOWAY" },
 		{ RED_PTY,	"RED_PTY" },
@@ -745,8 +752,8 @@ check_duplicated_redirections(const char *name, size_t len,
 	};
 	int i = 0, j = sizeof(mixtures) / sizeof(mixtures[0]);
 
-	oldflags &= ~(RED_NOBUF|RED_EOF|RED_PTY);
-	newflags &= ~(RED_NOBUF|RED_EOF|RED_PTY);
+	oldflags &= ~(RED_FLUSH|RED_EOF|RED_PTY);
+	newflags &= ~(RED_FLUSH|RED_EOF|RED_PTY);
 
 	for (i = 0; i < j; i++) {
 		bool both_have_common = \
@@ -788,6 +795,7 @@ redirect_string(const char *str, size_t explen, bool not_string,
 	static struct redirect *save_rp = NULL;	/* hold onto rp that should
 	                                         * be freed for reuse
 	                                         */
+	int save_errno;
 
 	if (do_sandbox)
 		fatal(_("redirection not allowed in sandbox mode"));
@@ -877,7 +885,7 @@ redirect_string(const char *str, size_t explen, bool not_string,
 						(redirect_flags_t) rp->flag, (redirect_flags_t) tflag);
 			}
 
-			if (((rp->flag & ~(RED_NOBUF|RED_EOF|RED_PTY)) == tflag
+			if (((rp->flag & ~(RED_FLUSH|RED_EOF|RED_PTY)) == tflag
 			    || (outflag != 0
 				&& (rp->flag & (RED_FILE|RED_WRITE)) == outflag))) {
 				break;
@@ -892,8 +900,8 @@ redirect_string(const char *str, size_t explen, bool not_string,
 			rp = save_rp;
 			efree(rp->value);
 		} else
-			emalloc(rp, struct redirect *, sizeof(struct redirect), "redirect");
-		emalloc(newstr, char *, explen + 1, "redirect");
+			emalloc(rp, struct redirect *, sizeof(struct redirect));
+		emalloc(newstr, char *, explen + 1);
 		memcpy(newstr, str, explen);
 		newstr[explen] = '\0';
 		str = newstr;
@@ -937,21 +945,23 @@ redirect_string(const char *str, size_t explen, bool not_string,
 			(void) flush_io();
 
 			os_restore_mode(fileno(stdin));
-			set_sigpipe_to_default();
 			/*
 			 * Don't check failure_fatal; see input pipe below.
 			 * Note that the failure happens upon failure to fork,
 			 * using a non-existant program will still succeed the
 			 * popen().
 			 */
-			if ((rp->output.fp = popen(str, binmode("w"))) == NULL)
+			if ((rp->output.fp = gawk_popen_write(str)) == NULL)
 				fatal(_("cannot open pipe `%s' for output: %s"),
 						str, strerror(errno));
-			ignore_sigpipe();
 
 			/* set close-on-exec */
 			os_close_on_exec(fileno(rp->output.fp), str, "pipe", "to");
-			rp->flag |= RED_NOBUF;
+
+			// Allow the user to say they don't want pipe output
+			// to be flushed all the time.
+			if (! avoid_flush(str))
+				rp->flag |= RED_FLUSH;
 			break;
 		case redirect_pipein:
 			if (extfd >= 0) {
@@ -966,15 +976,20 @@ redirect_string(const char *str, size_t explen, bool not_string,
 		case redirect_input:
 			direction = "from";
 			fd = (extfd >= 0) ? extfd : devopen(str, binmode("r"));
-			if (fd == INVALID_HANDLE && errno == EISDIR) {
-				*errflg = EISDIR;
-				/* do not free rp, saving it for reuse (save_rp = rp) */
-				return NULL;
-			}
+			save_errno = errno;
+			/* don't fail before letting registered
+			   parsers a chance to take control */
 			rp->iop = iop_alloc(fd, str, errno);
 			find_input_parser(rp->iop);
 			iop_finish(rp->iop);
 			if (! rp->iop->valid) {
+				if (fd == INVALID_HANDLE && save_errno == EISDIR) {
+					*errflg = EISDIR;
+					iop_close(rp->iop);
+					rp->iop = NULL;
+					/* do not free rp, saving it for reuse (save_rp = rp) */
+					return NULL;
+				}
 				if (! do_traditional && rp->iop->errcode != 0)
 					update_ERRNO_int(rp->iop->errcode);
 				iop_close(rp->iop);
@@ -1032,7 +1047,7 @@ redirect_string(const char *str, size_t explen, bool not_string,
 						close(fd);
 				}
 				if (rp->output.fp != NULL && os_isatty(fd))
-					rp->flag |= RED_NOBUF;
+					rp->flag |= RED_FLUSH;
 
 				/* Move rp to the head of the list. */
 				if (! new_rp && red_head != rp) {
@@ -1325,7 +1340,7 @@ close_rp(struct redirect *rp, two_way_close_type how)
 		}
 	} else if ((rp->flag & (RED_PIPE|RED_WRITE)) == (RED_PIPE|RED_WRITE)) {
 		/* write to pipe */
-		status = sanitize_exit_status(pclose(rp->output.fp));
+		status = sanitize_exit_status(gawk_popen_write_close(rp->output.fp));
 		if ((BINMODE & BINMODE_INPUT) != 0)
 			os_setbinmode(fileno(stdin), O_BINARY);
 
@@ -2542,7 +2557,7 @@ use_pipes:
  * block signals instead to avoid interfering with installed signal handlers.
  */
 
-static int
+int
 wait_any(int interesting)	/* pid of interest, if any */
 {
 	int pid;
@@ -2755,13 +2770,13 @@ gawk_popen(const char *cmd, struct redirect *rp)
 	FILE *current;
 
 	os_restore_mode(fileno(stdin));
-	set_sigpipe_to_default();
 
+	set_sigpipe_to_default();
 	current = popen(cmd, binmode("r"));
+	ignore_sigpipe();
 
 	if ((BINMODE & BINMODE_INPUT) != 0)
 		os_setbinmode(fileno(stdin), O_BINARY);
-	ignore_sigpipe();
 
 	if (current == NULL)
 		return NULL;
@@ -2808,7 +2823,8 @@ do_getline_redir(int into_variable, enum redirval redirtype)
 {
 	struct redirect *rp = NULL;
 	IOBUF *iop;
-	int cnt = EOF;
+	size_t cnt;
+	int retval = EOF;
 	char *s = NULL;
 	int errcode;
 	NODE *redir_exp = NULL;
@@ -2843,14 +2859,14 @@ do_getline_redir(int into_variable, enum redirval redirtype)
 		return make_number((AWKNUM) 0.0);
 
 	errcode = 0;
-	cnt = get_a_record(& s, iop, & errcode, (lhs ? NULL : & field_width));
+	retval = get_a_record(& s, & cnt, iop, & errcode, (lhs ? NULL : & field_width));
 	if (errcode != 0) {
 		if (! do_traditional && (errcode != -1))
 			update_ERRNO_int(errcode);
-		return make_number((AWKNUM) cnt);
+		return make_number((AWKNUM) retval);
 	}
 
-	if (cnt == EOF) {
+	if (retval == EOF) {
 		/*
 		 * Don't do iop_close() here if we are
 		 * reading from a pipe; otherwise
@@ -2868,7 +2884,9 @@ do_getline_redir(int into_variable, enum redirval redirtype)
 		set_record(s, cnt, field_width);
 	else {			/* assignment to variable */
 		unref(*lhs);
-		*lhs = make_string(s, cnt);
+		// s could be NULL if cnt == 0, avoid passing a null
+		// pointer to make_string().
+		*lhs = make_string(s != NULL ? s : "", cnt);
 		(*lhs)->flags |= USER_INPUT;
 	}
 
@@ -2880,7 +2898,8 @@ do_getline_redir(int into_variable, enum redirval redirtype)
 NODE *
 do_getline(int into_variable, IOBUF *iop)
 {
-	int cnt = EOF;
+	size_t cnt;
+	int retval = EOF;
 	char *s = NULL;
 	int errcode;
 	const awk_fieldwidth_info_t *field_width = NULL;
@@ -2892,16 +2911,16 @@ do_getline(int into_variable, IOBUF *iop)
 	}
 
 	errcode = 0;
-	cnt = get_a_record(& s, iop, & errcode, (into_variable ? NULL : & field_width));
+	retval = get_a_record(& s, & cnt, iop, & errcode, (into_variable ? NULL : & field_width));
 	if (errcode != 0) {
 		if (! do_traditional && (errcode != -1))
 			update_ERRNO_int(errcode);
 		if (into_variable)
 			(void) POP_ADDRESS();
-		return make_number((AWKNUM) cnt);
+		return make_number((AWKNUM) retval);
 	}
 
-	if (cnt == EOF)
+	if (retval == EOF)
 		return NULL;	/* try next file */
 	INCREMENT_REC(NR);
 	INCREMENT_REC(FNR);
@@ -2912,7 +2931,9 @@ do_getline(int into_variable, IOBUF *iop)
 		NODE **lhs;
 		lhs = POP_ADDRESS();
 		unref(*lhs);
-		*lhs = make_string(s, cnt);
+		// s could be NULL if cnt == 0, avoid passing a null
+		// pointer to make_string().
+		*lhs = make_string(s != NULL ? s : "", cnt);
 		(*lhs)->flags |= USER_INPUT;
 	}
 	return make_number((AWKNUM) 1.0);
@@ -2956,7 +2977,7 @@ init_awkpath(path_info *pi)
 			max_path++;
 
 	// +3 --> 2 for null entries at front and end of path, 1 for NULL end of list
-	ezalloc(pi->awkpath, const char **, (max_path + 3) * sizeof(char *), "init_awkpath");
+	ezalloc(pi->awkpath, const char **, (max_path + 3) * sizeof(char *));
 
 	start = path;
 	i = 0;
@@ -2986,7 +3007,7 @@ init_awkpath(path_info *pi)
 
 			len = end - start;
 			if (len > 0) {
-				emalloc(p, char *, len + 2, "init_awkpath");
+				emalloc(p, char *, len + 2);
 				memcpy(p, start, len);
 
 				/* add directory punctuation if necessary */
@@ -3018,7 +3039,7 @@ do_find_source(const char *src, struct stat *stb, int *errcode, path_info *pi)
 
 	/* some kind of path name, no search */
 	if (ispath(src)) {
-		emalloc(path, char *, strlen(src) + 1, "do_find_source");
+		emalloc(path, char *, strlen(src) + 1);
 		strcpy(path, src);
 		if (stat(path, stb) == 0)
 			return path;
@@ -3030,7 +3051,7 @@ do_find_source(const char *src, struct stat *stb, int *errcode, path_info *pi)
 	if (pi->awkpath == NULL)
 		init_awkpath(pi);
 
-	emalloc(path, char *, pi->max_pathlen + strlen(src) + 1, "do_find_source");
+	emalloc(path, char *, pi->max_pathlen + strlen(src) + 1);
 	for (i = 0; pi->awkpath[i] != NULL; i++) {
 		if (strcmp(pi->awkpath[i], "./") == 0 || strcmp(pi->awkpath[i], ".") == 0)
 			*path = '\0';
@@ -3076,7 +3097,7 @@ find_source(const char *src, struct stat *stb, int *errcode, int is_extlib)
 
 		/* append EXTLIB_SUFFIX and try again */
 		save_errno = errno;
-		emalloc(file_ext, char *, src_len + suffix_len + 1, "find_source");
+		emalloc(file_ext, char *, src_len + suffix_len + 1);
 		sprintf(file_ext, "%s%s", src, EXTLIB_SUFFIX);
 		path = do_find_source(file_ext, stb, errcode, pi);
 		efree(file_ext);
@@ -3095,7 +3116,7 @@ find_source(const char *src, struct stat *stb, int *errcode, int is_extlib)
 #endif
 
 #ifdef DEFAULT_FILETYPE
-	if (! do_traditional && path == NULL) {
+	if (path == NULL) {
 		char *file_awk;
 		int save_errno = errno;
 #ifdef VMS
@@ -3103,8 +3124,7 @@ find_source(const char *src, struct stat *stb, int *errcode, int is_extlib)
 #endif
 
 		/* append ".awk" and try again */
-		emalloc(file_awk, char *, strlen(src) +
-			sizeof(DEFAULT_FILETYPE) + 1, "find_source");
+		emalloc(file_awk, char *, strlen(src) + sizeof(DEFAULT_FILETYPE) + 1);
 		sprintf(file_awk, "%s%s", src, DEFAULT_FILETYPE);
 		path = do_find_source(file_awk, stb, errcode, pi);
 		efree(file_awk);
@@ -3174,7 +3194,7 @@ find_input_parser(IOBUF *iop)
 	awk_input_parser_t *ip, *ip2;
 
 	/* if already associated with an input parser, bail out early */
-	if (iop->public.get_record != NULL)
+	if (iop->public.get_record != NULL || iop->public.read_func != read)
 		return;
 
 	ip = ip2 = NULL;
@@ -3363,22 +3383,29 @@ iop_alloc(int fd, const char *name, int errno_val)
 {
 	IOBUF *iop;
 
-	ezalloc(iop, IOBUF *, sizeof(IOBUF), "iop_alloc");
+	ezalloc(iop, IOBUF *, sizeof(IOBUF));
 
 	iop->public.fd = fd;
 	iop->public.name = name;
-	iop->public.read_func = ( ssize_t(*)() ) read;
+	iop->public.read_func = ( ssize_t(*)(int, void *, size_t) ) read;
 	iop->valid = false;
 	iop->errcode = errno_val;
 
 	if (fd != INVALID_HANDLE)
 		fstat(fd, & iop->public.sbuf);
-#if defined(__MINGW32__)
-	else if (errno_val == EISDIR) {
-		iop->public.sbuf.st_mode = (_S_IFDIR | _S_IRWXU);
-		iop->public.fd = FAKE_FD_VALUE;
-	}
+	else {
+#ifdef HAVE_LSTAT
+		int (*statf)(const char *, struct stat *) = lstat;
+#else
+		int (*statf)(const char *, struct stat *) = stat;
 #endif
+		/*
+		 * Try to fill in the stat struct. If it fails, zero
+		 * it out.
+		 */
+		if (statf(name, & iop->public.sbuf) < 0)
+			memset(& iop->public.sbuf, 0, sizeof(struct stat));
+	}
 
 	return iop;
 }
@@ -3431,7 +3458,7 @@ iop_finish(IOBUF *iop)
 		lintwarn(_("data file `%s' is empty"), iop->public.name);
 	iop->errcode = errno = 0;
 	iop->count = iop->scanoff = 0;
-	emalloc(iop->buf, char *, iop->size += 1, "iop_finish");
+	emalloc(iop->buf, char *, iop->size += 1);
 	iop->off = iop->buf;
 	iop->dataend = NULL;
 	iop->end = iop->buf + iop->size;
@@ -3481,7 +3508,7 @@ grow_iop_buffer(IOBUF *iop)
 		fatal(_("could not allocate more input memory"));
 
 	iop->size = newsize;
-	erealloc(iop->buf, char *, iop->size, "grow_iop_buffer");
+	erealloc(iop->buf, char *, iop->size);
 	iop->off = iop->buf + off;
 	iop->dataend = iop->off + valid;
 	iop->end = iop->buf + iop->size;
@@ -3685,11 +3712,19 @@ again:
 	 *              found a simple string match at end, return REC_OK
 	 *      else
 	 *              grow buffer, add more data, try again
+	 *              if possibly a variable length match (in which case more
+	 *                  match could be in next input buffer)
+	 *                      grow buffer, add more data, try again
+	 *              else # simpler re
+	 *                      return REC_OK
+	 *              fi
 	 *      fi
 	 */
 	if (iop->off + reend >= iop->dataend) {
 		if (reisstring(RS->stptr, RS->stlen, RSre, iop->off))
 			return REC_OK;
+		else if (! RSre->maybe_long)
+ 			return REC_OK;
 		else
 			return TERMATEND;
 	}
@@ -3804,6 +3839,57 @@ find_longest_terminator:
 	return REC_OK;
 }
 
+/* csvscan --- handle --csv mode */
+
+static RECVALUE
+csvscan(IOBUF *iop, struct recmatch *recm, SCANSTATE *state)
+{
+	char *bp;
+	char rs = '\n';
+	static bool in_quote = false;
+
+	memset(recm, '\0', sizeof(struct recmatch));
+	*(iop->dataend) = rs;   /* set sentinel */
+	recm->start = iop->off; /* beginning of record */
+
+	if (*state == NOSTATE)  /* reset in_quote at the beginning of the record */
+		in_quote = false;
+
+	bp = iop->off;
+	if (*state == INDATA)   /* skip over data we've already seen */
+		bp += iop->scanoff;
+
+	/* look for a newline outside quotes */
+	do {
+		while (*bp != rs && bp < iop->dataend) { 
+			if (*bp == '\"')
+				in_quote = ! in_quote;
+			bp++;
+		}
+		if (bp > iop->off && bp[-1] == '\r') {
+			// convert CR-LF to LF by shifting the record
+			memmove(bp - 1, bp, iop->dataend - bp);
+			iop->dataend--;
+			*(iop->dataend) = rs;	/* set sentinel */
+			bp--;
+		}
+	} while (in_quote && bp < iop->dataend && bp++);
+
+	/* set len to what we have so far, in case this is all there is */
+	recm->len = bp - recm->start;
+
+	if (bp < iop->dataend) {        /* found it in the buffer */
+		recm->rt_start = bp;
+		recm->rt_len = 1;
+		*state = NOSTATE;
+		return REC_OK;
+	} else {
+		*state = INDATA;
+		iop->scanoff = bp - iop->off;
+		return NOTERM;
+	}
+}
+
 /* retryable --- return true if PROCINFO[<filename>, "RETRY"] exists */
 
 static inline int
@@ -3840,13 +3926,14 @@ errno_io_retry(void)
 
 /*
  * get_a_record --- read a record from IOP into out,
- * return length of EOF, set RT.
+ * its length into len, and set RT.
+ * return 0 on success, EOF when out of data, and -2 if I/O would block.
  * Note that errcode is never NULL, and the caller initializes *errcode to 0.
- * If I/O would block, return -2.
  */
 
 static int
 get_a_record(char **out,        /* pointer to pointer to data */
+        size_t *len,            /* pointer to record length */
         IOBUF *iop,             /* input IOP */
         int *errcode,           /* pointer to error variable */
         const awk_fieldwidth_info_t **field_width)
@@ -3855,7 +3942,6 @@ get_a_record(char **out,        /* pointer to pointer to data */
 	struct recmatch recm;
 	SCANSTATE state;
 	RECVALUE ret;
-	int retval;
 	NODE *rtval = NULL;
 	static RECVALUE (*lastmatchrec)(IOBUF *iop, struct recmatch *recm, SCANSTATE *state) = NULL;
 
@@ -3874,6 +3960,9 @@ get_a_record(char **out,        /* pointer to pointer to data */
 		if (rc == EOF)
 			iop->flag |= IOP_AT_EOF;
 		else {
+			assert(rc >= 0);
+			*len = rc;
+			rc = 0;
 			if (rt_len != 0)
 				set_RT(rt_start, rt_len);
 			else
@@ -4033,11 +4122,11 @@ get_a_record(char **out,        /* pointer to pointer to data */
 
 	if (recm.len == 0) {
 		*out = NULL;
-		retval = 0;
+		*len = 0;
 	} else {
 		assert(recm.start != NULL);
 		*out = recm.start;
-		retval = recm.len;
+		*len = recm.len;
 	}
 
 	iop->off += recm.len + recm.rt_len;
@@ -4045,7 +4134,7 @@ get_a_record(char **out,        /* pointer to pointer to data */
 	if (recm.len == 0 && recm.rt_len == 0 && at_eof(iop))
 		return EOF;
 	else
-		return retval;
+		return 0;
 }
 
 /* set_RS --- update things as appropriate when RS is set */
@@ -4053,6 +4142,13 @@ get_a_record(char **out,        /* pointer to pointer to data */
 void
 set_RS()
 {
+	/*
+	 * Setting RS does nothing if CSV mode, warn in that case,
+	 * but don't warn on first call which happens at initialization.
+	 */
+	static bool first_time = true;
+	static bool warned = false;
+
 	static NODE *save_rs = NULL;
 
 	/*
@@ -4083,9 +4179,18 @@ set_RS()
 	refree(RS_re[1]);
 	RS_re[0] = RS_re[1] = RS_regexp = NULL;
 
+	if (! first_time && do_csv) {
+		if (! warned) {
+			warned = true;
+			warning(_("assignment to RS has no effect when using --csv"));
+		}
+		return;
+	}
+
 	if (RS->stlen == 0) {
 		RS_is_null = true;
-		matchrec = rsnullscan;
+		if (first_time || ! do_csv)
+			matchrec = rsnullscan;
 	} else if ((RS->stlen > 1 || (RS->flags & REGEX) != 0) && ! do_traditional) {
 		static bool warned = false;
 
@@ -4093,17 +4198,23 @@ set_RS()
 		RS_re[1] = make_regexp(RS->stptr, RS->stlen, true, true, true);
 		RS_regexp = RS_re[IGNORECASE];
 
-		matchrec = rsrescan;
+		if (first_time || ! do_csv)
+			matchrec = rsrescan;
 
 		if (do_lint_extensions && ! warned) {
 			lintwarn(_("multicharacter value of `RS' is a gawk extension"));
 			warned = true;
 		}
-	} else
-		matchrec = rs1scan;
+	} else {
+		if (first_time || ! do_csv)
+			matchrec = rs1scan;
+	}
 set_FS:
 	if (current_field_sep() == Using_FS)
 		set_FS();
+
+	if (first_time)
+		first_time = false;
 }
 
 
@@ -4285,7 +4396,7 @@ in_PROCINFO(const char *pidx1, const char *pidx2, NODE **full_idx)
 		str_len = strlen(pidx1) + subsep->stlen	+ strlen(pidx2);
 
 	if (sub == NULL) {
-		emalloc(str, char *, str_len + 1, "in_PROCINFO");
+		emalloc(str, char *, str_len + 1);
 		sub = make_str_node(str, str_len, ALREADY_MALLOCED);
 		if (full_idx)
 			*full_idx = sub;
@@ -4293,7 +4404,7 @@ in_PROCINFO(const char *pidx1, const char *pidx2, NODE **full_idx)
 		/* *full_idx != NULL */
 
 		assert(sub->valref == 1);
-		erealloc(sub->stptr, char *, str_len + 1, "in_PROCINFO");
+		erealloc(sub->stptr, char *, str_len + 1);
 		sub->stlen = str_len;
 	}
 
@@ -4317,7 +4428,7 @@ in_PROCINFO(const char *pidx1, const char *pidx2, NODE **full_idx)
 static long
 get_read_timeout(IOBUF *iop)
 {
-	long tmout = 0;
+	long tmout = read_default_timeout;	/* initialized from env. variable in init_io() */
 
 	if (PROCINFO_node != NULL) {
 		const char *name = iop->public.name;
@@ -4341,11 +4452,10 @@ get_read_timeout(IOBUF *iop)
 			(void) force_number(val);
 			tmout = get_number_si(val);
 		}
-	} else
-		tmout = read_default_timeout;	/* initialized from env. variable in init_io() */
+	}
 
 	/* overwrite read routine only if an extension has not done so */
-	if ((iop->public.read_func == ( ssize_t(*)() ) read) && tmout > 0)
+	if ((iop->public.read_func == ( ssize_t(*)(int, void *, size_t) ) read) && tmout > 0)
 		iop->public.read_func = read_with_timeout;
 
 	return tmout;
@@ -4474,4 +4584,115 @@ init_output_wrapper(awk_output_buf_t *outbuf)
 	outbuf->gawk_fflush = gawk_fflush;
 	outbuf->gawk_ferror = gawk_ferror;
 	outbuf->gawk_fclose = gawk_fclose;
+}
+
+/* avoid_flush --- return true if should not flush a pipe every time */
+
+static bool
+avoid_flush(const char *name)
+{
+	static const char bufferpipe[] = "BUFFERPIPE";
+
+	return in_PROCINFO(bufferpipe, NULL, NULL) != NULL
+		|| in_PROCINFO(name, bufferpipe, NULL) != NULL;
+}
+
+/*
+ * See the thread starting at
+ * https://lists.gnu.org/archive/html/bug-gawk/2023-12/msg00011.html.
+ *
+ * We do our version of popen for write pipes in order
+ * to be able to reset SIGPIPE. Bleah.
+ */
+
+typedef struct write_pipe {
+	FILE *fp;
+	pid_t pid;
+} write_pipe;
+
+static write_pipe *open_pipes = NULL;
+
+/* gawk_popen_write --- open a pipe for writing, set up a FILE * return value. */
+
+static FILE *
+gawk_popen_write(const char *cmd)
+{
+#if defined(VMS) || defined(__MINGW32__)
+	return popen(cmd, binmode("w"));
+#else
+	pid_t childpid;
+	int pipefds[2];
+
+	if (pipe(pipefds) < 0)
+		return NULL;
+
+	if (open_pipes == NULL) {
+		int count = getdtablesize();
+
+		emalloc(open_pipes, write_pipe *, sizeof(write_pipe) * count);
+		memset(open_pipes, 0, sizeof(write_pipe) * count);
+	}
+
+	childpid = fork();
+	if (childpid == 0) {
+		// in the child
+		(void) close(pipefds[1]);	// close write end in the child
+		(void) close(0);
+		if (dup(pipefds[0]) != 0)
+			fatal(_("gawk_popen_write: failed to move pipe fd to standard input"));
+		(void) close(pipefds[0]);
+		set_sigpipe_to_default();
+		execl("/bin/sh", "sh", "-c", cmd, NULL);
+		_exit(errno == ENOENT ? 127 : 126);
+	} else if (childpid < 0) {
+		(void) close(pipefds[0]);
+		(void) close(pipefds[1]);
+		return NULL;
+	}
+
+	(void) close(pipefds[0]);	// don't need the read end in the parent
+	FILE *fp = fdopen(pipefds[1], binmode("w"));
+	if (fp == NULL) {
+		(void) close(pipefds[1]);
+		return NULL;
+	}
+
+	int index = pipefds[1];	// use the write file desciptor.
+	open_pipes[index].pid = childpid;
+	open_pipes[index].fp = fp;
+
+	return fp;
+#endif
+}
+
+/* gawk_popen_write_close --- close a FILE * that we created */
+
+static int
+gawk_popen_write_close(FILE *fp)
+{
+#if defined(VMS) || defined(__MINGW32__)
+	return pclose(fp);
+#else
+	int status, index;
+
+	if (open_pipes == NULL || fp == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	index = fileno(fp);
+	if (open_pipes[index].fp == fp) {
+		(void) fflush(fp);
+		(void) fclose(fp);
+		status = wait_any(open_pipes[index].pid);
+
+		open_pipes[index].fp = NULL;
+		open_pipes[index].pid = 0;
+
+		return status;
+	}
+
+	errno = EBADF;
+	return -1;
+#endif
 }

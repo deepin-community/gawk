@@ -1,9 +1,9 @@
 dnl Decide whether or not to use the persistent memory allocator
-
-# Copyright (C) 2022 Free Software Foundation, Inc.
-# This file is free software; the Free Software Foundation
-# gives unlimited permission to copy and/or distribute it,
-# with or without modifications, as long as this notice is preserved.
+dnl
+dnl Copyright (C) 2022, 2023, 2025 Free Software Foundation, Inc.
+dnl This file is free software; the Free Software Foundation
+dnl gives unlimited permission to copy and/or distribute it,
+dnl with or without modifications, as long as this notice is preserved.
 
 AC_DEFUN([GAWK_USE_PERSISTENT_MALLOC],
 [
@@ -19,22 +19,16 @@ then
 		use_persistent_malloc=yes
 		case $host_os in
 		linux-*)
-			AX_CHECK_COMPILE_FLAG([-no-pie],
-				[LDFLAGS="${LDFLAGS} -no-pie"
-				export LDFLAGS])
+			AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+				#include <sys/personality.h>
+				int x = ADDR_NO_RANDOMIZE;
+				]], [[]])],[have_addr_no_randomize=yes],[have_addr_no_randomize=no])
 			;;
-		*darwin*)
-			# 23 October 2022: See README_d/README.macosx for
-			# the details on what's happening here. See also
-			# the manual.
-
-			# Compile as Intel binary all the time, even on M1.
-			CFLAGS="${CFLAGS} -arch x86_64"
-			LDFLAGS="${LDFLAGS} -Xlinker -no_pie"
-			export CFLAGS LDFLAGS
+ 		*darwin*)
+			true	# On macos we no longer need -no-pie
 			;;
 		*cygwin* | *CYGWIN* | *solaris2.11* | freebsd13.* | openbsd7.* )
-			true	# nothing do, exes on these systems are not PIE
+			true	# nothing to do, exes on these systems are not PIE
 			;;
 		# Other OS's go here...
 		*)
@@ -54,9 +48,14 @@ then
 fi
 
 AM_CONDITIONAL([USE_PERSISTENT_MALLOC], [test "$use_persistent_malloc" = "yes"])
+AM_CONDITIONAL([HAVE_ADDR_NO_RANDOMIZE], [test "$have_addr_no_randomize" = "yes"])
 
 if test "$use_persistent_malloc" = "yes"
 then
 	AC_DEFINE(USE_PERSISTENT_MALLOC, 1, [Define to 1 if we can use the pma allocator])
+fi
+if test "$have_addr_no_randomize" = "yes"
+then
+	AC_DEFINE(HAVE_ADDR_NO_RANDOMIZE, 1, [Define to 1 if we have ADDR_NO_RANDOMIZE value])
 fi
 ])

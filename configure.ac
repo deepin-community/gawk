@@ -1,7 +1,7 @@
 dnl
 dnl configure.ac --- autoconf input file for gawk
 dnl
-dnl Copyright (C) 1995-2022 the Free Software Foundation, Inc.
+dnl Copyright (C) 1995-2025 the Free Software Foundation, Inc.
 dnl
 dnl This file is part of GAWK, the GNU implementation of the
 dnl AWK Programming Language.
@@ -23,7 +23,7 @@ dnl
 
 dnl Process this file with autoconf to produce a configure script.
 
-AC_INIT([GNU Awk],[5.2.1],[bug-gawk@gnu.org],[gawk])
+AC_INIT([GNU Awk],[5.3.2],[bug-gawk@gnu.org],[gawk])
 
 # This is a hack. Different versions of install on different systems
 # are just too different. Chuck it and use install-sh.
@@ -138,6 +138,11 @@ then
 	then
 		CFLAGS="$CFLAGS -Wall -fno-builtin"
 	fi
+
+	if grep -i '^mallocdebug$' $srcdir/.developing > /dev/null
+	then
+		CFLAGS="$CFLAGS -DUSE_REAL_MALLOC"
+	fi
 	AC_MSG_RESULT([yes])
 else
 	AC_MSG_RESULT([no])
@@ -182,8 +187,9 @@ gt_LC_MESSAGES
 dnl checks for header files
 AC_CHECK_HEADERS(arpa/inet.h fcntl.h locale.h libintl.h mcheck.h \
 	netdb.h netinet/in.h stddef.h string.h \
-	sys/ioctl.h sys/param.h sys/select.h sys/socket.h sys/time.h unistd.h \
-	termios.h stropts.h wchar.h wctype.h)
+	spawn.h \
+	sys/ioctl.h sys/param.h sys/personality.h sys/select.h sys/socket.h sys/time.h \
+	unistd.h termios.h stropts.h wchar.h wctype.h)
 
 gl_C_BOOL
 AC_HEADER_SYS_WAIT
@@ -305,19 +311,15 @@ AC_SEARCH_LIBS(fmod, m)
 AC_SEARCH_LIBS(isinf, m)
 AC_SEARCH_LIBS(ismod, m)
 AC_SEARCH_LIBS(isnan, m)
-dnl Don't look for libsigsegv on OSF/1, gives us severe headaches
-case $host_os in
-osf1)	: ;;
-*)
-	gl_LIBSIGSEGV
-	;;
-esac
 
 # Need the check for mkstemp and tmpfile for missing_d/snprintf.c.
 AC_CHECK_FUNCS(__etoa_l atexit btowc fmod fwrite_unlocked gai_strerror \
 	getgrent getgroups grantpt isascii isblank iswctype iswlower iswupper \
+	gettimeofday clock_gettime lstat \
+	getdtablesize \
 	mbrlen memcmp memcpy memmove memset \
-	mkstemp mtrace posix_openpt setenv setlocale setsid sigprocmask \
+	_NSGetExecutablePath \
+	mkstemp mtrace personality posix_openpt setenv setlocale setsid sigprocmask \
 	snprintf strcasecmp strchr strcoll strerror strftime strncasecmp \
 	strsignal strtod strtoul system timegm tmpfile towlower towupper \
 	tzset usleep waitpid wcrtomb wcscoll wctype)
@@ -442,14 +444,8 @@ dnl check for readline support
 GAWK_CHECK_READLINE
 
 dnl check for mpfr support
-case `uname -m` in
-*'Power Macintosh'*)
-	: ;;
-*)
-	case $SKIP_MPFR in
-	no)	GNUPG_CHECK_MPFR
-		;;
-	esac
+case $SKIP_MPFR in
+no)	GNUPG_CHECK_MPFR
 	;;
 esac
 
@@ -500,21 +496,31 @@ fi
 AC_OUTPUT
 if test "$GCC" = yes &&
    test -f $srcdir/.developing &&
-   grep -i debug $srcdir/.developing > /dev/null
+   grep -i '^debug$' $srcdir/.developing > /dev/null
 then
-	for i in awkgram command
-	do
-		rm -f $i.c
-		ed - $i.y << \EOF
+	if grep -i '^yaccdebug$' $srcdir/.developing > /dev/null
+	then
+		for i in awkgram command
+		do
+			rm -f $i.c
+			ed - $i.y << \EOF
 /^%}/a
 %no-lines
 .
 w
 EOF
-	done
-	for i in . support
+		done
+	fi
+	for i in . support extension
 	do
 		sed -e '/-O2/s///' -e '/^CFLAGS = /s//&${DEBUG} /' $i/Makefile > foo
+		mv foo $i/Makefile
+	done
+elif test "$GCC" = yes
+then
+	for i in . support extension
+	do
+		sed -e '/-O2/s//-O3/g'  $i/Makefile > foo
 		mv foo $i/Makefile
 	done
 fi

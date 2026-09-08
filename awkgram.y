@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1986, 1988, 1989, 1991-2022 the Free Software Foundation, Inc.
+ * Copyright (C) 1986, 1988, 1989, 1991-2025 the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
  * AWK Programming Language.
@@ -63,6 +63,7 @@ static char *tokexpand(void);
 static NODE *set_profile_text(NODE *n, const char *str, size_t len);
 static int check_qualified_special(char *token);
 static char *qualify_name(const char *name, size_t len);
+static void push_ns_onto_namespace_chain(INSTRUCTION *comment);
 static INSTRUCTION *trailing_comment;
 static INSTRUCTION *outer_comment;
 static INSTRUCTION *interblock_comment;
@@ -641,7 +642,7 @@ statement
 
 			merge_comments($2, NULL);
 			ip = list_create(instruction(Op_no_op));
-			$$ = list_append(ip, $2); 
+			$$ = list_append(ip, $2);
 		} else
 			$$ = NULL;
 	  }
@@ -696,10 +697,10 @@ statement
 					}
 
 					if (case_values == NULL)
-						emalloc(case_values, const char **, sizeof(char *) * maxcount, "statement");
+						emalloc(case_values, const char **, sizeof(char *) * maxcount);
 					else if (case_count >= maxcount) {
 						maxcount += 128;
-						erealloc(case_values, const char **, sizeof(char*) * maxcount, "statement");
+						erealloc(case_values, const char **, sizeof(char*) * maxcount);
 					}
 					case_values[case_count++] = caseval;
 				} else {
@@ -1772,7 +1773,7 @@ common_exp
 			n1 = force_string(n1);
 			n2 = force_string(n2);
 			nlen = n1->stlen + n2->stlen;
-			erealloc(n1->stptr, char *, nlen + 1, "constant fold");
+			erealloc(n1->stptr, char *, nlen + 1);
 			memcpy(n1->stptr + n1->stlen, n2->stptr, n2->stlen);
 			n1->stlen = nlen;
 			n1->stptr[nlen] = '\0';
@@ -2605,7 +2606,7 @@ yyerror(const char *m, ...)
 	count = strlen(mesg) + 1;
 	if (lexptr != NULL)
 		count += (lexeme - thisline) + 2;
-	ezalloc(buf, char *, count+1, "yyerror");
+	ezalloc(buf, char *, count+1);
 
 	bp = buf;
 
@@ -2816,9 +2817,9 @@ parse_program(INSTRUCTION **pcode, bool from_eval)
 		errcount++;
 
 	if (args_array == NULL)
-		emalloc(args_array, NODE **, (max_args + 2) * sizeof(NODE *), "parse_program");
+		emalloc(args_array, NODE **, (max_args + 2) * sizeof(NODE *));
 	else
-		erealloc(args_array, NODE **, (max_args + 2) * sizeof(NODE *), "parse_program");
+		erealloc(args_array, NODE **, (max_args + 2) * sizeof(NODE *));
 
 	return (ret || errcount);
 }
@@ -2839,7 +2840,7 @@ do_add_srcfile(enum srctype stype, char *src, char *path, SRCFILE *thisfile)
 {
 	SRCFILE *s;
 
-	ezalloc(s, SRCFILE *, sizeof(SRCFILE), "do_add_srcfile");
+	ezalloc(s, SRCFILE *, sizeof(SRCFILE));
 	s->src = estrdup(src, strlen(src));
 	s->fullpath = path;
 	s->stype = stype;
@@ -3105,11 +3106,6 @@ get_src_buf()
 	int savelen;
 	struct stat sbuf;
 
-	/*
-	 * No argument prototype on readfunc on purpose,
-	 * avoids problems with some ancient systems where
-	 * the types of arguments to read() aren't up to date.
-	 */
 	static ssize_t (*readfunc)(int, void *, size_t) = NULL;
 
 	if (readfunc == NULL) {
@@ -3166,7 +3162,7 @@ get_src_buf()
 					break;
 				}
 			savelen = lexptr - scan;
-			emalloc(buf, char *, savelen + 1, "get_src_buf");
+			emalloc(buf, char *, savelen + 1);
 			memcpy(buf, scan, savelen);
 			thisline = buf;
 			lexptr = buf + savelen;
@@ -3214,7 +3210,7 @@ get_src_buf()
 #undef A_DECENT_BUFFER_SIZE
 		sourcefile->bufsize = l;
 		newfile = true;
-		emalloc(sourcefile->buf, char *, sourcefile->bufsize, "get_src_buf");
+		emalloc(sourcefile->buf, char *, sourcefile->bufsize);
 		memset(sourcefile->buf, '\0', sourcefile->bufsize);	// keep valgrind happy
 		lexptr = lexptr_begin = lexeme = sourcefile->buf;
 		savelen = 0;
@@ -3244,7 +3240,7 @@ get_src_buf()
 
 			if (savelen > sourcefile->bufsize / 2) { /* long line or token  */
 				sourcefile->bufsize *= 2;
-				erealloc(sourcefile->buf, char *, sourcefile->bufsize, "get_src_buf");
+				erealloc(sourcefile->buf, char *, sourcefile->bufsize);
 				scan = sourcefile->buf + (scan - lexptr_begin);
 				lexptr_begin = sourcefile->buf;
 			}
@@ -3296,11 +3292,11 @@ tokexpand()
 	if (tokstart != NULL) {
 		tokoffset = tok - tokstart;
 		toksize *= 2;
-		erealloc(tokstart, char *, toksize, "tokexpand");
+		erealloc(tokstart, char *, toksize);
 		tok = tokstart + tokoffset;
 	} else {
 		toksize = 60;
-		emalloc(tokstart, char *, toksize, "tokexpand");
+		emalloc(tokstart, char *, toksize);
 		tok = tokstart;
 	}
 	tokend = tokstart + toksize;
@@ -3867,10 +3863,11 @@ retry:
 	case '{':
 		if (++in_braces == 1)
 			firstline = sourceline;
+		/* fall through */
 	case ';':
 	case ',':
 	case '[':
-			return lasttok = c;
+		return lasttok = c;
 	case ']':
 		c = nextc(true);
 		pushback();
@@ -4438,7 +4435,7 @@ retry:
 		case LEX_EVAL:
 			if (in_main_context())
 				goto out;
-			emalloc(tokkey, char *, tok - tokstart + 1, "yylex");
+			emalloc(tokkey, char *, tok - tokstart + 1);
 			tokkey[0] = '@';
 			memcpy(tokkey + 1, tokstart, tok - tokstart);
 			yylval = GET_INSTRUCTION(Op_token);
@@ -5020,6 +5017,9 @@ mk_function(INSTRUCTION *fi, INSTRUCTION *def)
 	}
 
 	if (do_pretty_print) {
+		if (namespace_chain == NULL)
+			push_ns_onto_namespace_chain(NULL);
+
 		fi[3].nexti = namespace_chain;
 		namespace_chain = NULL;
 		(void) list_prepend(def, instruction(Op_exec_count));
@@ -5041,6 +5041,18 @@ mk_function(INSTRUCTION *fi, INSTRUCTION *def)
 	/* remove params from symbol table */
 	remove_params(thisfunc);
 	return fi;
+}
+
+/* push_ns_onto_namespace_chain --- update the namespace chain */
+
+static void
+push_ns_onto_namespace_chain(INSTRUCTION *comment)
+{
+	INSTRUCTION *new_ns = instruction(Op_K_namespace);
+	new_ns->comment = comment;
+	new_ns->ns_name = estrdup(current_namespace, strlen(current_namespace));
+	new_ns->nexti = namespace_chain;
+	namespace_chain = new_ns;
 }
 
 /*
@@ -5098,7 +5110,7 @@ check_params(char *fname, int pcount, INSTRUCTION *list)
 
 	assert(pcount > 0);
 
-	emalloc(pnames, char **, pcount * sizeof(char *), "check_params");
+	emalloc(pnames, char **, pcount * sizeof(char *));
 
 	for (i = 0, p = list->nexti; p != NULL; i++, p = np) {
 		np = p->nexti;
@@ -5111,7 +5123,7 @@ check_params(char *fname, int pcount, INSTRUCTION *list)
 				_("function `%s': cannot use function name as parameter name"), fname);
 		} else if (is_std_var(name)) {
 			error_ln(p->source_line,
-				_("function `%s': cannot use special variable `%s' as a function parameter"),
+				_("function `%s': parameter `%s': POSIX disallows using a special variable as a function parameter"),
 					fname, name);
 		} else if (strchr(name, ':') != NULL)
 			error_ln(p->source_line,
@@ -5167,8 +5179,8 @@ func_use(const char *name, enum defref how)
 
 	/* not in the table, fall through to allocate a new one */
 
-	ezalloc(fp, struct fdesc *, sizeof(struct fdesc), "func_use");
-	emalloc(fp->name, char *, len + 1, "func_use");
+	ezalloc(fp, struct fdesc *, sizeof(struct fdesc));
+	emalloc(fp->name, char *, len + 1);
 	strcpy(fp->name, name);
 	fp->next = ftable[ind];
 	ftable[ind] = fp;
@@ -5366,6 +5378,7 @@ isnoeffect(OPCODE type)
 	case Op_push_array:
 	case Op_pop:
 	case Op_lint_plus:
+	case Op_exec_count:
 		return true;
 	default:
 		break;	/* keeps gcc -Wall happy */
@@ -5830,6 +5843,22 @@ append_rule(INSTRUCTION *pattern, INSTRUCTION *action)
 	return rule_block[rule];
 }
 
+/*
+ * 3/2023:
+ * mk_assignment() is called when an assignment statement is seen,
+ * as an expression.  optimize_assignment() is called when an expression
+ * is seen as statement (inside braces).
+ *
+ * When a field assignment is seen, it needs to be optizimed into
+ * Op_store_field_exp or Op_store_field to avoid memory management
+ * issues. Thus, the Op_field_spec_lhs -> Op_store_field_expr
+ * change is done in mk_assignment. (Consider foo && $0 = $1, the
+ * assignment is part of an expression.)
+ *
+ * If the assignment is in a statement, then optimize_assignment()
+ * turn Op_store_field_expr into Op_store_field.
+ */
+
 /* mk_assignment --- assignment bytecodes */
 
 static INSTRUCTION *
@@ -5866,7 +5895,8 @@ mk_assignment(INSTRUCTION *lhs, INSTRUCTION *rhs, INSTRUCTION *op)
 	else
 		ip = lhs;
 
-	(void) list_append(ip, op);
+	if (tp->opcode != Op_field_spec_lhs || op->opcode != Op_assign)
+		(void) list_append(ip, op);
 
 	if (tp->opcode == Op_push_lhs
 			&& tp->memory->type == Node_var
@@ -5878,9 +5908,14 @@ mk_assignment(INSTRUCTION *lhs, INSTRUCTION *rhs, INSTRUCTION *op)
 		(void) list_append(ip, instruction(Op_var_assign));
 		ip->lasti->assign_var = tp->memory->var_assign;
 	} else if (tp->opcode == Op_field_spec_lhs) {
-		(void) list_append(ip, instruction(Op_field_assign));
-		ip->lasti->field_assign = (Func_ptr) 0;
-		tp->target_assign = ip->lasti;
+		if (op->opcode == Op_assign) {
+			bcfree(op);
+			tp->opcode = Op_store_field_exp;
+		} else {
+			(void) list_append(ip, instruction(Op_field_assign));
+			ip->lasti->field_assign = (Func_ptr) 0;
+			tp->target_assign = ip->lasti;
+		}
 	} else if (tp->opcode == Op_subscript_lhs) {
 		(void) list_append(ip, instruction(Op_subscript_assign));
 	}
@@ -5926,6 +5961,11 @@ optimize_assignment(INSTRUCTION *exp)
 	i2 = NULL;
 	i1 = exp->lasti;
 
+	if (i1->opcode == Op_store_field_exp) {
+		i1->opcode = Op_store_field;
+		return exp;
+	}
+
 	if (   i1->opcode != Op_assign
 	    && i1->opcode != Op_field_assign)
 		return list_append(exp, instruction(Op_pop));
@@ -5969,21 +6009,6 @@ optimize_assignment(INSTRUCTION *exp)
 				i3->nexti = NULL;
 				bcfree(i1);          /* Op_assign */
 				exp->lasti = i3;     /* update Op_list */
-				return exp;
-			}
-			break;
-
-		case Op_field_spec_lhs:
-			if (i2->nexti->opcode == Op_assign
-					&& i2->nexti->nexti == i1
-					&& i1->opcode == Op_field_assign
-			) {
-				/* $n = .. */
-				i2->opcode = Op_store_field;
-				bcfree(i2->nexti);  /* Op_assign */
-				i2->nexti = NULL;
-				bcfree(i1);          /* Op_field_assign */
-				exp->lasti = i2;    /* update Op_list */
 				return exp;
 			}
 			break;
@@ -6631,7 +6656,7 @@ set_profile_text(NODE *n, const char *str, size_t len)
 	if (do_pretty_print) {
 		// two extra bytes: one for NUL termination, and another in
 		// case we need to add a leading minus sign in add_sign_to_num
-		emalloc(n->stptr, char *, len + 2, "set_profile_text");
+		emalloc(n->stptr, char *, len + 2);
 		memcpy(n->stptr, str, len);
 		n->stptr[len] = '\0';
 		n->stlen = len;
@@ -6675,7 +6700,7 @@ merge_comments(INSTRUCTION *c1, INSTRUCTION *c2)
 	}
 
 	char *buffer;
-	emalloc(buffer, char *, total + 1, "merge_comments");
+	emalloc(buffer, char *, total + 1);
 
 	strcpy(buffer, c1->memory->stptr);
 	if (c1->comment != NULL) {
@@ -6883,11 +6908,7 @@ set_namespace(INSTRUCTION *ns, INSTRUCTION *comment)
 	efree(ns->lextok);
 
 	// save info and push on front of list of namespaces seen
-	INSTRUCTION *new_ns = instruction(Op_K_namespace);
-	new_ns->comment = comment;
-	new_ns->ns_name = estrdup(current_namespace, strlen(current_namespace));
-	new_ns->nexti = namespace_chain;
-	namespace_chain = new_ns;
+	push_ns_onto_namespace_chain(comment);
 
 	ns->lextok = NULL;
 	bcfree(ns);
@@ -6937,7 +6958,7 @@ qualify_name(const char *name, size_t len)
 		size_t length = strlen(current_namespace) + 2 + len + 1;
 		char *buf;
 
-		emalloc(buf, char *, length, "qualify_name");
+		emalloc(buf, char *, length);
 		sprintf(buf, "%s::%s", current_namespace, name);
 
 		return buf;

@@ -1,8 +1,142 @@
-   Copyright (C) 2019, 2020, 2021, 2022 Free Software Foundation, Inc.
+   Copyright (C) 2019, 2020, 2021, 2022, 2023, 2024, 2025
+   Free Software Foundation, Inc.
    
    Copying and distribution of this file, with or without modification,
    are permitted in any medium without royalty provided the copyright
    notice and this notice are preserved.
+
+Changes from 5.3.1 to 5.3.2
+---------------------------
+
+1. The pretty printer now produces fewer spurious newlines; at the
+   outermost level it now adds newlines between block comments and
+   the block or function that follows them. The extra final newline
+   is no longer produced.
+
+2. OpenVMS 9.2-2 x86_64 is now supported.
+
+3. On Linux and macos systems, the -no-pie linker flag is no longer required.
+   PMA now works on macos systems with Apple silicon, and not just
+   Intel systems.
+
+4. Still more subtle issues related to uninitialized array elements have
+   been fixed.
+
+5. Associative arrays should now not grow quite as fast as they used to.
+
+6. The code and documentation are now consistent with each other with
+   respect to path searching and adding .awk to the filename. Both
+   are always done, even with --posix and --traditional.
+
+7. As usual, there have been several minor code cleanups and bug fixes.
+   See the ChangeLog for details.
+
+Changes from 5.3.0 to 5.3.1
+---------------------------
+
+1. More subtle issues related to uninitialized array elements have
+   been fixed.
+
+2. A number of bugs in the debugger related to handling of arrays
+   have been fixed.
+
+3. Some subtle bugs in the API have been fixed.
+
+4. Use of MPFR is now possible again on 32-bit Power PC Mac systems.
+
+5. Race conditions around broken pipes for system() and read and write
+   pipes should now be closed off.
+
+6. Support for OSF/1 has been removed.
+
+7. The never-documented --nostalgia option has been removed. It was
+   causing bug reports.
+
+8. The implementation of printf/sprintf has been thoroughly reworked
+   in order to make the code more maintainable and to fix a goodly
+   number of corner cases.
+
+9. As usual, there have been several minor code cleanups and bug fixes.
+   See the ChangeLog for details.
+
+Changes from 5.2.x to 5.3.0
+---------------------------
+
+1. Infrastructure changes: Removed the use of libsigsegv. The
+   value-add was never very much and it caused problems in some
+   environments.
+
+2. In keeping with new features in BWK awk, gawk now has built-in
+   CSV file parsing. The behavior is intended to be identical to
+   that of the "One True AWK" when --csv is applied. See the
+   manual for details.
+
+3. Also in keeping with BWK awk, gawk now supports a new \u escape
+   sequence. This should be followed by 1-8 hexadecimal digits. The
+   given code point is converted to its corresponding multibyte encoding
+   for storage inside gawk. See the manual.
+
+4. If PROCINFO["BUFFERPIPE"] exists, then pipe output is buffered.
+   You can also use PROCINFO["command", "BUFFERPIPE"]. See the manual
+   for details.
+
+5. Because of the additional `do_csv' variable in the API, which breaks
+   binary compatibility, the API major version was updated to 4 and
+   the minor version was reset to zero.  The API remains source code
+   compatible; that is, existing extensions should only require recompilation.
+
+6. The manual now requires Texinfo 7.1 and its texinfo.tex for formatting.
+   As a result, we no longer need to pre-process it, removing the need
+   for gawktexi.in and leaving just gawk.texi.
+
+7. And of course, there have been several minor code cleanups and bug fixes.
+   See the ChangeLog for details.
+
+Changes from 5.2.2 to 5.2.x
+---------------------------
+
+1. The readdir extension has been updated with additonal code and
+   features, see the manual or its man page. As a result, the
+   readdir_test.c extension has been removed.
+
+2. We have a new translation: Ukrainian.
+
+3. Several subtle issues related to null regexp matches around
+   multibyte characters have been fixed.
+
+Changes from 5.2.1 to 5.2.2
+---------------------------
+
+1. Infrastructure upgrades: makeinfo 7.0.1 must be used to format
+   the manual.  As a result, the manual can also now be formatted
+   with LaTeX by running it through `makeinfo --latex'.
+
+2. Gawk no longer builds an x86_64 executable on M1 macOS systems.
+   This means that PMA is unavailable on those systems.
+
+3. Gawk will now diagnose if a heap file was created with a different
+   setting of -M/--bignum than in the current invocation and exit with
+   a fatal message if so.
+
+4. Gawk no longer "leaks" its free list of NODEs in the heap file, resulting
+   in much more efficient usage of persistent storage.
+
+5. PROCINFO["pma"] exists if the PMA allocator is compiled into gawk.
+   Its value is the PMA version.
+
+6. The time extension is no longer deprecated. The strptime() function
+   from gawkextlib's timex extension has been added to it.
+
+7. Better information is passed to input parsers for when they want to
+   decide whether or not to take control of a file. In particular, the
+   readdir extension is simplified for Windows because of this.
+
+8. The various PNG files are now installed for Info and HTML. The
+   images files now have gawk_ prefixed names to avoid any conflicts
+   with other installed PNG file names.
+
+9. As usual, there have been several minor code cleanups and bug fixes.
+   See the ChangeLog for details.
 
 Changes from 5.2.0 to 5.2.1
 ---------------------------
@@ -21,7 +155,7 @@ Changes from 5.2.0 to 5.2.1
 5. The rwarray extension's readall() function has had some bugs fixed.
 
 6. The PMA allocator is now supported on FreeBSD, OpenBSD and Linux on S/390x.
-   Is is now supported also on both Intel and M1 macOS systems.
+   It is now supported also on both Intel and M1 macOS systems.
 
 7. There have been several minor code cleanups and bug fixes. See the
    ChangeLog for details.

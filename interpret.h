@@ -2,10 +2,10 @@
  * interpret.h ---  run a list of instructions.
  */
 
-/* 
- * Copyright (C) 1986, 1988, 1989, 1991-2022,
+/*
+ * Copyright (C) 1986, 1988, 1989, 1991-2025,
  * the Free Software Foundation, Inc.
- * 
+ *
  * This file is part of GAWK, the GNU implementation of the
  * AWK Programming Language.
  *
@@ -222,6 +222,7 @@ uninitialized_scalar:
 					// convert very original untyped to scalar
 					m->type = Node_var;
 					m->var_value = dupnode(Nnull_string);
+					m->flags &= ~(MPFN | MPZN);
 
 					// set up local param by value
 					m = dupnode(Nnull_string);
@@ -240,8 +241,10 @@ uninitialized_scalar:
 
 				if (op != Op_push_arg_untyped) {
 					// convert very original untyped to scalar
+					elem_new_reset(m);
 					m->type = Node_var;
 					m->var_value = dupnode(Nnull_string);
+					m->flags &= ~(MPFN | MPZN);
 
 					// set up local param by value
 					DEREF(m);
@@ -275,8 +278,7 @@ uninitialized_scalar:
 				PUSH(m);
 		 		break;
 			}
- 			/* else
-				fall through */
+ 			/* fall through */
 		case Op_push_array:
 			PUSH(pc->memory);
 			break;
@@ -325,7 +327,6 @@ uninitialized_scalar:
 
 				r = *assoc_lookup(t1, t2);
 			}
-			DEREF(t2);
 
 			/* for SYMTAB, step through to the actual variable */
 			if (t1 == symbol_table) {
@@ -344,7 +345,18 @@ uninitialized_scalar:
 				}
 			}
 
-			if (r->type == Node_val || r->type == Node_elem_new)
+			if (r->type == Node_elem_new && r->elemnew_parent == NULL) {
+				r->elemnew_parent = t1;
+				t2 = force_string(t2);
+				assert(r->elemnew_vname == NULL);
+				r->elemnew_vname = estrdup(t2->stptr, t2->stlen);	/* the subscript in parent array */
+			}
+
+			DEREF(t2);
+
+			if (r->type == Node_val
+			    || r->type == Node_var
+			    || r->type == Node_elem_new)
 				UPREF(r);
 			PUSH(r);
 			break;
@@ -381,7 +393,8 @@ uninitialized_scalar:
 				r = force_array(r, false);
 				r->parent_array = t1;
 				t2 = force_string(t2);
-				r->vname = estrdup(t2->stptr, t2->stlen);	/* the subscript in parent array */
+				if (r->vname == NULL)
+					r->vname = estrdup(t2->stptr, t2->stlen);	/* the subscript in parent array */
 			} else if (r->type != Node_var_array) {
 				t2 = force_string(t2);
 				fatal(_("attempt to use scalar `%s[\"%.*s\"]' as an array"),
@@ -482,9 +495,10 @@ uninitialized_scalar:
 		case Op_lint_plus:
 			// no need to check do_lint, this opcode won't
 			// be generated if that's not true
-			t1 = TOP();
-			t2 = PEEK(1);
-			if ((t1->flags & STRING) != 0 && (t2->flags & STRING) != 0)
+			t1 = fixtype(TOP());
+			t2 = fixtype(PEEK(1));
+			if ((t1->flags & (STRING|USER_INPUT)) == STRING
+			    && (t2->flags & (STRING|USER_INPUT)) == STRING)
 				lintwarn(_("operator `+' used on two string values"));
 			break;
 
@@ -780,6 +794,7 @@ mod:
 			 */
 
 			lhs = get_lhs(pc->memory, false);
+
 			unref(*lhs);
 			r = pc->initval;	/* constant initializer */
 			if (r != NULL) {
@@ -792,6 +807,7 @@ mod:
 			break;
 
 		case Op_store_field:
+		case Op_store_field_exp:
 		{
 			/* field assignment optimization,
 			 * see awkgram.y (optimize_assignment)
@@ -814,6 +830,10 @@ mod:
 			UNFIELD(*lhs, r);
 			/* field variables need the string representation: */
 			force_string(*lhs);
+			if (op == Op_store_field_exp) {
+				UPREF(*lhs);
+				PUSH(*lhs);
+			}
 		}
 			break;
 
@@ -834,7 +854,7 @@ mod:
 			if (t1 != t2 && t1->valref == 1 && (t1->flags & (MALLOC|MPFN|MPZN)) == MALLOC) {
 				size_t nlen = t1->stlen + t2->stlen;
 
-				erealloc(t1->stptr, char *, nlen + 1, "r_interpret");
+				erealloc(t1->stptr, char *, nlen + 1);
 				memcpy(t1->stptr + t1->stlen, t2->stptr, t2->stlen);
 				t1->stlen = nlen;
 				t1->stptr[nlen] = '\0';
@@ -850,8 +870,7 @@ mod:
 				if ((t1->flags & WSTRCUR) != 0 && (t2->flags & WSTRCUR) != 0) {
 					size_t wlen = t1->wstlen + t2->wstlen;
 
-					erealloc(t1->wstptr, wchar_t *,
-							sizeof(wchar_t) * (wlen + 1), "r_interpret");
+					erealloc(t1->wstptr, wchar_t *, sizeof(wchar_t) * (wlen + 1));
 					memcpy(t1->wstptr + t1->wstlen, t2->wstptr, t2->wstlen * sizeof(wchar_t));
 					t1->wstlen = wlen;
 					t1->wstptr[wlen] = L'\0';
@@ -861,7 +880,7 @@ mod:
 				size_t nlen = t1->stlen + t2->stlen;
 				char *p;
 
-				emalloc(p, char *, nlen + 1, "r_interpret");
+				emalloc(p, char *, nlen + 1);
 				memcpy(p, t1->stptr, t1->stlen);
 				memcpy(p + t1->stlen, t2->stptr, t2->stlen);
 				/* N.B. No NUL-termination required, since make_str_node will do it. */
@@ -1043,6 +1062,7 @@ mod:
 
 arrayfor:
 			getnode(r);
+			memset(r, '\0', sizeof(NODE));
 			r->type = Node_arrayfor;
 			r->for_list = list;
 			r->for_list_size = num_elems;		/* # of elements in list */
@@ -1290,6 +1310,8 @@ match_re:
 					fatal(_("function `%s' not defined"), pc->func_name);
 				pc->func_body = f;     /* save for next call */
 			}
+			if (do_itrace)
+				fprintf(stderr, "++\t%s\n", pc->func_name);
 
 			if (f->type == Node_ext_func) {
 				/* keep in sync with indirect call code */

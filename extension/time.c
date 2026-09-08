@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2012, 2013, 2014, 2018, 2022
+ * Copyright (C) 2012, 2013, 2014, 2018, 2022, 2023, 2024,
  * the Free Software Foundation, Inc.
  *
  * This file is part of GAWK, the GNU implementation of the
@@ -40,8 +40,9 @@
 #include <sys/stat.h>
 
 #ifdef __VMS
+#ifndef HAVE_NANOSLEEP
 #define HAVE_NANOSLEEP
-#define HAVE_GETTIMEOFDAY
+#endif
 #ifdef gettimeofday
 #undef gettimeofday
 #endif
@@ -81,9 +82,8 @@ vms_fake_nanosleep(struct timespec *rqdly, struct timespec *rmdly)
 
 static const gawk_api_t *api;	/* for convenience macros to work */
 static awk_ext_id_t ext_id;
-static const char *ext_version = "time extension: version 1.1";
-static awk_bool_t issue_warning(void);
-static awk_bool_t (*init_func)(void) = issue_warning;
+static const char *ext_version = "time extension: version 1.2";
+static awk_bool_t (*init_func)(void) = NULL;
 
 int plugin_is_GPL_compatible;
 
@@ -99,16 +99,6 @@ int plugin_is_GPL_compatible;
 #include <windows.h>
 #endif
 
-/* issue_warning --- issue a warning that this extension is obsolete */
-
-static awk_bool_t
-issue_warning(void)
-{
-	warning(ext_id, _("The time extension is obsolete. Use the timex extension from gawkextlib instead."));
-
-	return awk_true;
-}
-
 /*
  * Returns time since 1/1/1970 UTC as a floating point value; should
  * have sub-second precision, but the actual precision will vary based
@@ -121,7 +111,13 @@ do_gettimeofday(int nargs, awk_value_t *result, struct awk_ext_func *unused)
 
 	assert(result != NULL);
 
-#if defined(HAVE_GETTIMEOFDAY)
+#if defined(HAVE_CLOCK_GETTIME)
+	{
+		struct timespec tv;
+		clock_gettime(CLOCK_REALTIME, & tv);
+		curtime = tv.tv_sec+(tv.tv_nsec/1000000000.0);
+	}
+#elif defined(HAVE_GETTIMEOFDAY)
 	{
 		struct timeval tv;
 		gettimeofday(&tv,NULL);
@@ -217,9 +213,63 @@ do_sleep(int nargs, awk_value_t *result, struct awk_ext_func *unused)
 	return make_number(rc, result);
 }
 
+#ifndef HAVE_STRPTIME
+#include "../missing_d/strptime.c"
+#endif
+
+/*  do_strptime --- call strptime */
+
+static awk_value_t *
+do_strptime(int nargs, awk_value_t *result, struct awk_ext_func *unused)
+{
+	awk_value_t string, format;
+
+	assert(result != NULL);
+	make_number(0.0, result);
+
+	if (do_lint) {
+		if (nargs == 0) {
+			lintwarn(ext_id, _("strptime: called with no arguments"));
+			make_number(-1.0, result);
+			goto done0;
+		}
+	}
+
+	/* string is first arg, format is second arg */
+	if (! get_argument(0, AWK_STRING, & string)) {
+		fprintf(stderr, _("do_strptime: argument 1 is not a string\n"));
+		errno = EINVAL;
+		goto done1;
+	}
+	if (! get_argument(1, AWK_STRING, & format)) {
+		fprintf(stderr, _("do_strptime: argument 2 is not a string\n"));
+		errno = EINVAL;
+		goto done1;
+	}
+
+	struct tm broken_time;
+	memset(& broken_time, 0, sizeof(broken_time));
+	broken_time.tm_isdst = -1;
+	if (strptime(string.str_value.str, format.str_value.str, & broken_time) == NULL) {
+		make_number(-1.0, result);
+		goto done0;
+	}
+
+	time_t epoch_time = mktime(& broken_time);
+	make_number((double) epoch_time, result);
+	goto done0;
+
+done1:
+	update_ERRNO_int(errno);
+
+done0:
+	return result;
+}
+
 static awk_ext_func_t func_table[] = {
 	{ "gettimeofday", do_gettimeofday, 0, 0, awk_false, NULL },
 	{ "sleep", do_sleep, 1, 1, awk_false, NULL },
+	{ "strptime", do_strptime, 2, 2, awk_false, NULL },
 };
 
 /* define the dl_load function using the boilerplate macro */

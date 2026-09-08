@@ -1,9 +1,9 @@
 BEGIN {
-    FPAT = "([^,]+)|(\"[^\"]+\")"
+    FPAT = "([^,]*)|(\"[^\"]+\")"
 }
 
 {
-    print "NF = ", NF
+    print "NF =", NF
     for (i = 1; i <= NF; i++) {
         printf("$%d = <%s>\n", i, $i)
     }
